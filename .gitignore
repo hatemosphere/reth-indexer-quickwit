@@ -1,0 +1,9 @@
+/target
+*.dat
+*.lck
+*.version
+/reth-indexer-config.json
+/.vscode
+/.reference
+CLAUDE.md
+/data/*

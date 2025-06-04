@@ -1,0 +1,47 @@
+{
+  "rethDBLocation": "./data/reth-dev/dev",
+  "csvLocation": "./data/csv",
+  "fromBlockNumber": 0,
+  "toBlockNumber": 1000,
+  "quickwit": {
+    "apiEndpoint": "http://localhost:7280",
+    "indexPrefix": "reth-events",
+    "dataDirectory": "./data/quickwit",
+    "batchSize": 100,
+    "recreateIndexes": true,
+    "useEsBulkApi": false
+  },
+  "eventMappings": [
+    {
+      "decodeAbiItems": [
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "from",
+              "type": "address"
+            },
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "to",
+              "type": "address"
+            },
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "value",
+              "type": "uint256"
+            }
+          ],
+          "name": "Transfer",
+          "type": "event"
+        }
+      ],
+      "syncBackRoughlyEveryNLogs": 100,
+      "filter_by_contract_addresses": []
+    }
+  ]
+}

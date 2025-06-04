@@ -1,0 +1,70 @@
+[package]
+name = "reth-indexer"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.87.0"
+
+[dependencies]
+# Web framework
+axum = "0.8.4"
+tokio = { version = "1.45.1", features = ["full"] }
+
+# Reth dependencies - Using git for now, will update to stable versions in next step
+reth-db = { git = "https://github.com/paradigmxyz/reth", package = "reth-db" }
+reth-primitives = { git = "https://github.com/paradigmxyz/reth", package = "reth-primitives" }
+reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", package = "reth-primitives-traits" }
+reth-provider = { git = "https://github.com/paradigmxyz/reth", package = "reth-provider" }
+reth-chainspec = { git = "https://github.com/paradigmxyz/reth", package = "reth-chainspec" }
+reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", package = "reth-node-ethereum" }
+reth-node-types = { git = "https://github.com/paradigmxyz/reth", package = "reth-node-types" }
+
+# Alloy dependencies for Ethereum types and RPC types
+alloy-sol-types = "0.8"
+alloy-rpc-types = "1.0.9"
+alloy-consensus = "1.0.9"
+alloy-primitives = "1.1.2"
+
+# Database - Commented out as we'll focus on Quickwit
+# tokio-postgres = "0.7.13"
+# gcp-bigquery-client = "0.25.1"
+
+# Serialization
+csv = "1.3.1"
+serde_json = "1.0.140"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_with = "3.12.0"
+
+# CLI and logging
+clap = { version = "4.5.39", features = ["derive"] }
+log = "0.4.27"
+env_logger = "0.11.8"
+
+# Utilities
+regex = "1.11.1"
+futures = "0.3.31"
+rayon = "1.10.0"
+uuid = { version = "1.17.0", features = ["v4", "serde"] }
+lazy_static = "1.5.0"
+once_cell = "1.21.3"
+# rust_decimal = { version = "1.37.1", features = ["db-tokio-postgres"] } # Only needed for PostgreSQL
+phf = { version = "0.11.3", features = ["macros"] }
+indexmap = "2.9.0"
+chrono = "0.4.41"
+async-trait = "0.1.88"
+
+polars = { version = "0.48.1", features = ["dtype-datetime", "lazy", "describe", "serde", "json", "temporal", "parquet"]}
+
+# HTTP client for Quickwit API
+reqwest = { version = "0.12", features = ["json"] }
+
+# Memory allocator
+jemallocator = { version = "0.5.4", optional = true }
+jemalloc-ctl = { version = "0.5.4", optional = true }
+
+[profile.maxperf]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+
+[features]
+jemalloc = ["dep:jemallocator", "dep:jemalloc-ctl"]

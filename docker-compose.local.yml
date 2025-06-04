@@ -1,0 +1,66 @@
+services:
+  # Run Reth in dev mode (creates a local test chain)
+  reth-dev:
+    image: ghcr.io/paradigmxyz/reth:v1.4.7
+    container_name: reth-dev-node
+    volumes:
+      - ./data/reth-dev:/root/.local/share/reth
+    ports:
+      - "8545:8545"  # HTTP-RPC
+      - "8546:8546"  # WS-RPC
+    environment:
+      - RUST_LOG=info
+      - RUST_BACKTRACE=1
+    command: >
+      node
+      --dev
+      --dev.block-time 2sec
+      --http
+      --http.addr 0.0.0.0
+      --http.port 8545
+      --http.api "eth,net,web3"
+      --ws
+      --ws.addr 0.0.0.0
+      --ws.port 8546
+      --ws.api "eth,net,web3"
+      --datadir /root/.local/share/reth/dev
+      --db.log-level error
+      --max-outbound-peers 0
+      --max-inbound-peers 0
+    networks:
+      - reth-network
+
+  # Deploy test contracts and generate events
+  event-generator:
+    image: ghcr.io/foundry-rs/foundry:latest
+    container_name: event-generator
+    depends_on:
+      - reth-dev
+    volumes:
+      - ./test-contracts:/contracts
+      - ./scripts:/scripts
+    environment:
+      - RPC_URL=http://reth-dev:8545
+      - FOUNDRY_DISABLE_NIGHTLY_WARNING=true
+    command: ["/scripts/deploy-simple.sh"]
+    networks:
+      - reth-network
+
+  # Quickwit search engine
+  quickwit:
+    image: quickwit/quickwit:edge
+    container_name: quickwit
+    ports:
+      - "7280:7280"  # REST API
+      - "7281:7281"  # gRPC API
+    environment:
+      - RUST_LOG=info
+    volumes:
+      - ./data/quickwit:/quickwit/qwdata
+    command: ["run"]
+    networks:
+      - reth-network
+
+networks:
+  reth-network:
+    driver: bridge
