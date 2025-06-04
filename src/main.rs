@@ -1,5 +1,6 @@
 mod csv;
 mod datasource;
+mod datasource_factory;
 mod decode_events;
 mod error;
 mod indexer;

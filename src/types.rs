@@ -49,7 +49,7 @@ pub struct IndexerContractMapping {
     // pub contract_address: Option<Address>,
     pub filter_by_contract_addresses: Option<Vec<Address>>,
 
-    /// How often you should sync back to the postgres db.
+    /// How often to sync data from CSV to the configured datasources.
     #[serde(rename = "syncBackRoughlyEveryNLogs")]
     pub sync_back_every_n_log: u64,
 

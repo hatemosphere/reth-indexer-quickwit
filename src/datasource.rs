@@ -37,7 +37,7 @@ pub trait DatasourceWritable {
 /// Each table's columns will include the following commmon fields
 ///
 pub static COMMON_COLUMNS: phf::OrderedMap<&'static str, &'static str> = phf_ordered_map! {
-    "indexed_id" => "string",  // will need to generate uuid in rust; postgres allows for autogenerate
+    "indexed_id" => "string",  // unique identifier generated in rust
     "contract_address" => "string",
     "tx_hash" => "string",
     "block_number" => "int",
@@ -89,9 +89,8 @@ pub fn load_table_configs(
 }
 
 ///
-/// Maps solidity types (in indexer config) to a placeholder type
-/// The configuration / reth uses solidity types, we map these basic types
-/// to an equivalent bigquery type further downstream
+/// Maps solidity types to generic database types.
+/// Used for creating appropriate column types in various storage backends.
 ///
 /// # Arguments
 ///

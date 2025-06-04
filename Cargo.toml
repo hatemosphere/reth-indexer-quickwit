@@ -24,10 +24,6 @@ alloy-rpc-types = "1.0.9"
 alloy-consensus = "1.0.9"
 alloy-primitives = "1.1.2"
 
-# Database - Commented out as we'll focus on Quickwit
-# tokio-postgres = "0.7.13"
-# gcp-bigquery-client = "0.25.1"
-
 # Serialization
 csv = "1.3.1"
 serde_json = "1.0.140"
@@ -46,7 +42,6 @@ rayon = "1.10.0"
 uuid = { version = "1.17.0", features = ["v4", "serde"] }
 lazy_static = "1.5.0"
 once_cell = "1.21.3"
-# rust_decimal = { version = "1.37.1", features = ["db-tokio-postgres"] } # Only needed for PostgreSQL
 phf = { version = "0.11.3", features = ["macros"] }
 indexmap = "2.9.0"
 chrono = "0.4.41"

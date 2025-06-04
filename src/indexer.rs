@@ -18,7 +18,6 @@ use crate::{
     csv::{create_csv_writers, CsvWriter}, // Re-enabled for testing
     datasource::DatasourceWritable,
     decode_events::{abi_item_to_topic_id, decode_logs, DecodedLog},
-    parquet::init_parquet_db, // Re-enabled for testing
     provider::get_reth_factory,
     types::{IndexerConfig, IndexerContractMapping},
 };
@@ -140,10 +139,10 @@ async fn sync_state_to_db(
     csv_writer.reset();
 }
 
-/// Synchronizes all states from CSV files to the PostgreSQL database.
+/// Synchronizes all states from CSV files to the configured datasources.
 ///
 /// This function iterates over the event mappings specified in the `indexer_config`
-/// and synchronizes the state data from CSV files to the PostgreSQL database.
+/// and synchronizes the state data from CSV files to the configured datasources.
 /// For each ABI item in the event mappings, it finds the corresponding CSV writer
 /// and invokes the `sync_state_to_db` function to perform the synchronization.
 ///
@@ -167,57 +166,39 @@ async fn sync_all_states_to_db(
     }
 }
 
+/// Initialize datasource writers using the extensible factory pattern.
 ///
-///  This is a factory to declare the various supported datasources
-///  For now this will check existence of each type block to add to implementation (postgres or
-///  bigquery) - but should consider a more generic implementation in the future
+/// This function uses a registry-based approach to create datasource instances,
+/// making it easy to add new datasource types without modifying this function.
 ///
-///  # Arguments
+/// # Arguments
 ///
-///  * indexer_config: the full configuration
+/// * `indexer_config` - The full configuration
 pub async fn init_datasource_writers(
     indexer_config: &IndexerConfig,
 ) -> Vec<Box<dyn DatasourceWritable>> {
-    // Return a list / vector of datasource writers
-    let mut writers: Vec<Box<dyn DatasourceWritable>> = Vec::new();
-
-    if let Some(parquet_conf) = &indexer_config.parquet {
-        let parquet_client = init_parquet_db(parquet_conf, &indexer_config.event_mappings)
-            .await
-            .expect("Failed to initialize parquet client");
-        writers.push(Box::new(parquet_client));
-    }
-
-    // Quickwit support
-    if let Some(quickwit_conf) = &indexer_config.quickwit {
-        let quickwit_client = crate::quickwit::init_quickwit_db(quickwit_conf, &indexer_config.event_mappings)
-            .await
-            .expect("Failed to initialize Quickwit client");
-        writers.push(Box::new(quickwit_client));
-    }
-
-    if writers.is_empty() {
-        panic!("Must have at least one configured indexer datastore to run indexer - configure parquet or quickwit in your config!");
-    }
-
-    writers
+    crate::datasource_factory::init_datasource_writers(indexer_config)
+        .await
+        .unwrap_or_else(|e| {
+            panic!("Failed to initialize datasources: {}", e);
+        })
 }
 
 /// Synchronizes the indexer by processing blocks and writing the decoded logs to CSV files and
-/// a PostgreSQL database.
+/// configured datasources.
 ///
 /// This function performs the following steps:
 ///
-/// 1. Initializes the PostgreSQL database based on the provided configuration.
-/// 2. Initializes the `NodeDb` for accessing the reth database.
+/// 1. Initializes the datasource writers based on the provided configuration.
+/// 2. Initializes the reth provider for accessing the reth database.
 /// 3. Creates CSV writers for each ABI item based on the provided configuration.
 /// 4. Iterates over blocks starting from the `from_block` specified in the configuration up to the
 ///    `to_block` if provided (or until reaching the maximum block number).
-/// 5. Retrieves the block headers for each block number from the `NodeDb`.
+/// 5. Retrieves the block headers for each block number from the reth provider.
 /// 6. Checks if the block matches any contract addresses specified in the mapping and the RPC bloom
 ///    filter.
 /// 7. Invokes the `process_block` function to process the block and write the logs to CSV files and
-///    the PostgreSQL database.
+///    configured datasources.
 /// 8. Performs clean-up operations for any remaining CSV files.
 ///
 /// # Arguments
@@ -424,8 +405,8 @@ pub async fn sync(indexer_config: &IndexerConfig) {
 /// 2. Iterates over the transaction IDs within the block based on the retrieved indices.
 /// 3. Retrieves the transaction and receipt for each transaction ID from the `NodeDb`.
 /// 4. Filters the receipt logs based on the contract addresses specified in the mapping, if any.
-/// 5. Invokes the `process_transaction` function to decode and write the logs to CSV files and the
-///    PostgreSQL database.
+/// 5. Invokes the `process_transaction` function to decode and write the logs to CSV files and
+///    configured datasources.
 ///
 /// # Arguments
 ///
@@ -521,7 +502,7 @@ async fn process_block<T: ReceiptProvider + TransactionsProvider + HeaderProvide
     }
 }
 
-/// Processes a transaction by decoding logs and writing them to CSV files and a PostgreSQL database.
+/// Processes a transaction by decoding logs and writing them to CSV files and configured datasources.
 ///
 /// This function iterates over the `decode_abi_items` of the provided `IndexerContractMapping` and
 /// performs the following steps:
@@ -531,7 +512,7 @@ async fn process_block<T: ReceiptProvider + TransactionsProvider + HeaderProvide
 /// 2. Searches for a corresponding CSV writer based on the ABI item's name. If found, it proceeds
 ///    with decoding the logs and writing them to the CSV file.
 /// 3. After writing a certain number of logs, determined by the `sync_back_every_n_log` value in
-///    the mapping, it syncs the CSV file to the PostgreSQL database using the COPY command.
+///    the mapping, it syncs the CSV file to the configured datasources.
 ///
 /// # Arguments
 ///
