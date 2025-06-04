@@ -54,20 +54,20 @@ async fn main() {
         // Start RPC server using existing Quickwit instance
         if let Some(quickwit_conf) = &indexer_config.quickwit {
             println!("Starting RPC server...");
-            
+
             // Initialize Quickwit client (without recreating indexes)
             let mut quickwit_conf_for_rpc = quickwit_conf.clone();
             quickwit_conf_for_rpc.recreate_indexes = false;
-            
+
             let quickwit_client = quickwit::init_quickwit_db(&quickwit_conf_for_rpc, &indexer_config.event_mappings)
                 .await
                 .expect("Failed to initialize Quickwit client for RPC");
-            
+
             let rpc_port = std::env::var("RPC_PORT")
                 .unwrap_or("8545".to_string())
                 .parse::<u16>()
                 .unwrap_or(8545);
-            
+
             rpc::start_rpc_server(quickwit_client, quickwit_conf.index_prefix.clone(), rpc_port).await;
         } else {
             eprintln!("RPC mode requires Quickwit configuration");

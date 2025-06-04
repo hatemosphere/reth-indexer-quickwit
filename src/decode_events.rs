@@ -32,7 +32,7 @@ pub fn abi_item_to_topic_id(item: &ABIItem) -> H256 {
         .map(|input| input.type_.clone())
         .collect();
     let signature = format!("{}({})", item.name, input_types.join(","));
-    
+
     // Check cache first
     {
         let cache = TOPIC_ID_CACHE.lock().unwrap();
@@ -40,14 +40,14 @@ pub fn abi_item_to_topic_id(item: &ABIItem) -> H256 {
             return topic_id;
         }
     }
-    
+
     // Compute and cache
     let topic_id = keccak256(&signature);
     {
         let mut cache = TOPIC_ID_CACHE.lock().unwrap();
         cache.insert(signature, topic_id);
     }
-    
+
     topic_id
 }
 
@@ -122,7 +122,7 @@ fn decode_topic_value(topic: &[u8], abi: &ABIInput) -> String {
                 .unwrap_or_else(|_| format!("0x{}", hex::encode(topic)))
         };
     }
-    
+
     match abi.type_.as_str() {
         "address" => sol_data::Address::abi_decode(topic, false)
             .map(|addr| addr.to_checksum(None))
@@ -186,21 +186,21 @@ fn regex_match(abi_name: &str, regex: &str, value: &str) -> Result<bool, String>
             return Ok(compiled_regex.is_match(value));
         }
     }
-    
+
     // Not in cache, compile and store
     let compiled_regex = RegexBuilder::new(regex)
         .case_insensitive(true)
         .build()
         .map_err(|e| format!("Invalid regex for {}: {}", abi_name, e))?;
-    
+
     let is_match = compiled_regex.is_match(value);
-    
+
     // Store in cache
     {
         let mut cache = REGEX_CACHE.write().unwrap();
         cache.insert(regex.to_string(), compiled_regex);
     }
-    
+
     Ok(is_match)
 }
 

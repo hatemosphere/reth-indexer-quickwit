@@ -175,7 +175,7 @@ impl ParquetClient {
                 col("block_number").max().alias("max_block"),
             ])
             .collect()?;
-        
+
         let min = min_max
             .column("min_block")?
             .get(0)?
@@ -184,7 +184,7 @@ impl ParquetClient {
             .column("max_block")?
             .get(0)?
             .try_extract::<i64>()?;
-        
+
         Ok((min, max))
     }
 }

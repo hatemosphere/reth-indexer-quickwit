@@ -118,7 +118,7 @@ async fn handle_get_logs(
 
     // Build Quickwit query
     let query_json = build_quickwit_query(&filter);
-    
+
     // Create search request
     let search_request = QuickwitSearchRequest {
         query: query_json["query"].as_str().unwrap_or("*").to_string(),
@@ -126,7 +126,7 @@ async fn handle_get_logs(
         end_timestamp: query_json["end_timestamp"].as_i64().unwrap_or(i64::MAX),
         max_hits: query_json["max_hits"].as_u64().unwrap_or(1000) as usize,
     };
-    
+
     // Search across all event types
     let search_result = match state.quickwit_client.search_all_logs(search_request).await {
         Ok(result) => result,
@@ -138,7 +138,7 @@ async fn handle_get_logs(
             )))
         }
     };
-    
+
     // Transform Quickwit results to RPC logs
     let mut logs: Vec<RpcLog> = vec![];
     for hit in search_result.hits {
@@ -146,7 +146,7 @@ async fn handle_get_logs(
             logs.push(log);
         }
     }
-    
+
     Ok(Json(JsonRpcResponse::success(
         request.id,
         json!(logs),
@@ -162,7 +162,7 @@ fn quickwit_hit_to_rpc_log(hit: Value) -> Option<RpcLog> {
     let tx_index = hit.get("transaction_index")?.as_u64()?;
     let block_hash = B256::from_str(hit.get("block_hash")?.as_str()?).ok()?;
     let log_index = hit.get("log_index")?.as_u64()?;
-    
+
     // Extract topics (handling potential null/empty values)
     let mut topics = vec![];
     for i in 0..4 {
@@ -175,17 +175,17 @@ fn quickwit_hit_to_rpc_log(hit: Value) -> Option<RpcLog> {
             }
         }
     }
-    
+
     // Extract data
     let data_str = hit.get("data")?.as_str()?;
     let data = alloy_primitives::Bytes::from_str(data_str).ok()?;
-    
+
     // Create the inner log
     let inner = alloy_primitives::Log {
         address,
         data: alloy_primitives::LogData::new_unchecked(topics, data),
     };
-    
+
     Some(RpcLog {
         inner,
         block_hash: Some(block_hash),
@@ -205,16 +205,16 @@ async fn handle_get_block_by_number(
     // Parse params: [blockNumberOrTag, includeTransactions]
     let params_array = request.params.as_array()
         .ok_or_else(|| StatusCode::BAD_REQUEST)?;
-    
+
     let block_number_or_tag: BlockNumberOrTag = match params_array.get(0) {
         Some(v) => serde_json::from_value(v.clone()).map_err(|_| StatusCode::BAD_REQUEST)?,
         None => BlockNumberOrTag::Latest,
     };
-    
+
     let include_transactions = params_array.get(1)
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    
+
     // Convert to block number
     let block_number = match block_number_or_tag {
         BlockNumberOrTag::Number(n) => n,
@@ -226,7 +226,7 @@ async fn handle_get_block_by_number(
                 end_timestamp: i64::MAX,
                 max_hits: 1,
             };
-            
+
             match state.quickwit_client.search_all_logs(search_req).await {
                 Ok(result) => {
                     result.hits.get(0)
@@ -246,7 +246,7 @@ async fn handle_get_block_by_number(
             )))
         }
     };
-    
+
     // Query logs for this block
     let search_req = QuickwitSearchRequest {
         query: format!("block_number:{}", block_number),
@@ -254,7 +254,7 @@ async fn handle_get_block_by_number(
         end_timestamp: i64::MAX,
         max_hits: 10000, // Get all logs for the block
     };
-    
+
     let logs = match state.quickwit_client.search_all_logs(search_req).await {
         Ok(result) => result.hits,
         Err(e) => {
@@ -265,11 +265,11 @@ async fn handle_get_block_by_number(
             )))
         }
     };
-    
+
     if logs.is_empty() {
         return Ok(Json(JsonRpcResponse::success(request.id, json!(null))));
     }
-    
+
     // Extract block info from first log
     let first_log = &logs[0];
     let block_hash = first_log.get("block_hash")
@@ -280,7 +280,7 @@ async fn handle_get_block_by_number(
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.timestamp() as u64)
         .unwrap_or(0);
-    
+
     // Extract unique transaction hashes for the block
     let mut tx_hashes: Vec<String> = logs.iter()
         .filter_map(|log| log.get("tx_hash").and_then(|v| v.as_str()))
@@ -288,7 +288,7 @@ async fn handle_get_block_by_number(
         .collect();
     tx_hashes.sort();
     tx_hashes.dedup();
-    
+
     // Build complete ETH RPC block response
     let block = json!({
         "number": format!("0x{:x}", block_number),
@@ -308,18 +308,18 @@ async fn handle_get_block_by_number(
         "gasLimit": "0x1c9c380",
         "gasUsed": "0x0",
         "timestamp": format!("0x{:x}", timestamp),
-        "transactions": if include_transactions { 
+        "transactions": if include_transactions {
             // For full transactions, we'd need to store more tx data
             // For now, just return hashes
             json!(tx_hashes)
-        } else { 
+        } else {
             json!(tx_hashes) // Always return tx hashes array
         },
         "uncles": [],
         "baseFeePerGas": "0x0",
         "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
     });
-    
+
     Ok(Json(JsonRpcResponse::success(request.id, block)))
 }
 
@@ -330,7 +330,7 @@ async fn handle_get_transaction_receipt(
     // Parse params: [transactionHash]
     let params_array = request.params.as_array()
         .ok_or_else(|| StatusCode::BAD_REQUEST)?;
-    
+
     let tx_hash = match params_array.get(0).and_then(|v| v.as_str()) {
         Some(hash) => hash,
         None => {
@@ -341,7 +341,7 @@ async fn handle_get_transaction_receipt(
             )))
         }
     };
-    
+
     // Query logs for this transaction
     let search_req = QuickwitSearchRequest {
         query: format!("tx_hash:{}", tx_hash),
@@ -349,7 +349,7 @@ async fn handle_get_transaction_receipt(
         end_timestamp: i64::MAX,
         max_hits: 1000, // Get all logs for the transaction
     };
-    
+
     let logs = match state.quickwit_client.search_all_logs(search_req).await {
         Ok(result) => result.hits,
         Err(e) => {
@@ -360,11 +360,11 @@ async fn handle_get_transaction_receipt(
             )))
         }
     };
-    
+
     if logs.is_empty() {
         return Ok(Json(JsonRpcResponse::success(request.id, json!(null))));
     }
-    
+
     // Extract receipt info from first log
     let first_log = &logs[0];
     let block_number = first_log.get("block_number")
@@ -376,13 +376,13 @@ async fn handle_get_transaction_receipt(
     let transaction_index = first_log.get("transaction_index")
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
-    
+
     // Convert logs to RPC format
     let rpc_logs: Vec<Value> = logs.iter()
         .filter_map(|hit| quickwit_hit_to_rpc_log(hit.clone()))
         .map(|log| serde_json::to_value(log).unwrap_or(json!({})))
         .collect();
-    
+
     // Build transaction receipt
     let receipt = json!({
         "transactionHash": tx_hash,
@@ -400,14 +400,14 @@ async fn handle_get_transaction_receipt(
         "effectiveGasPrice": "0x0",
         "type": "0x0"
     });
-    
+
     Ok(Json(JsonRpcResponse::success(request.id, receipt)))
 }
 
 /// Build a Quickwit query from an Ethereum filter
 fn build_quickwit_query(filter: &Filter) -> Value {
     let mut query_parts = vec![];
-    
+
     // Block range filter
     match &filter.block_option {
         FilterBlockOption::Range { from_block, to_block } => {
@@ -422,7 +422,7 @@ fn build_quickwit_query(filter: &Filter) -> Value {
             // Block hash filtering not supported in this simple implementation
         }
     }
-    
+
     // Address filter - filter.address is a FilterSet
     if !filter.address.is_empty() {
         let addrs: Vec<_> = filter.address.iter().collect();
@@ -437,7 +437,7 @@ fn build_quickwit_query(filter: &Filter) -> Value {
         };
         query_parts.push(address_query);
     }
-    
+
     // Topics filter - supports null values
     // filter.topics is an array of FilterSet
     for (i, topic_filter) in filter.topics.iter().enumerate() {
@@ -457,14 +457,14 @@ fn build_quickwit_query(filter: &Filter) -> Value {
         }
         // empty FilterSet means "any value" for this topic position, so we don't add a filter
     }
-    
+
     // Combine all query parts with AND
     let query_string = if query_parts.is_empty() {
         "*".to_string()
     } else {
         query_parts.join(" AND ")
     };
-    
+
     json!({
         "query": query_string,
         "start_timestamp": 0,
@@ -491,14 +491,14 @@ pub async fn start_rpc_server(
 ) {
     let state = RpcState::new(quickwit_client, index_prefix);
     let app = create_rpc_router(state);
-    
+
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
     println!("RPC server listening on http://{}", addr);
-    
+
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .unwrap();
-        
+
     axum::serve(listener, app)
         .await
         .unwrap();

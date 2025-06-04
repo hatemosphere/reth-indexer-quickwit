@@ -15,7 +15,7 @@ pub fn get_reth_factory(path: &Path) -> Result<ProviderFactory<NodeTypesWithDBAd
             println!("Database version: {}", version.trim());
         }
     }
-    
+
     let db = open_db_read_only(path.join("db").as_path(), DatabaseArguments::default()).map_err(|e| {
         format!("Could not open database: {:?}. Make sure reth node is syncing and readable", e)
     })?;
@@ -26,7 +26,7 @@ pub fn get_reth_factory(path: &Path) -> Result<ProviderFactory<NodeTypesWithDBAd
         .build();
     let static_file_provider = StaticFileProvider::read_only(path.join("static_files"), true)
         .map_err(|e| format!("Failed to create static file provider: {}", e))?;
-    
+
     let factory = ProviderFactory::<NodeTypesWithDBAdapter<EthereumNode, Arc<DatabaseEnv>>>::new(
         db.into(),
         spec.into(),

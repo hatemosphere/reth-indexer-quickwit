@@ -150,7 +150,7 @@ impl QuickwitClient {
             for table_name in self.table_map.keys() {
                 let index_id = self.get_index_id(table_name);
                 let url = format!("{}/api/v1/indexes/{}", self.api_endpoint, index_id);
-                
+
                 match self.http_client.delete(&url).send().await {
                     Ok(response) => {
                         if response.status().is_success() || response.status() == 404 {
@@ -173,7 +173,7 @@ impl QuickwitClient {
         for (table_name, column_map) in &self.table_map {
             let index_id = self.get_index_id(table_name);
             let index_config = self.build_index_config(&index_id, column_map);
-            
+
             let url = format!("{}/api/v1/indexes", self.api_endpoint);
             let response = self.http_client
                 .post(&url)
@@ -197,7 +197,7 @@ impl QuickwitClient {
     /// Build Quickwit index configuration
     fn build_index_config(&self, index_id: &str, column_map: &IndexMap<String, String>) -> QuickwitIndexConfig {
         let mut field_mappings = vec![];
-        
+
         // Add all fields from the column map
         for (field_name, field_type) in column_map {
             let quickwit_type = match (field_name.as_str(), field_type.as_str()) {
@@ -223,12 +223,12 @@ impl QuickwitClient {
             if quickwit_type == "i64" {
                 field.fast = Some(true);
             }
-            
+
             // Make timestamp field fast for time-based queries
             if quickwit_type == "datetime" {
                 field.fast = Some(true);
             }
-            
+
             // Make topic fields fast for efficient filtering in eth_getLogs
             if field_name.starts_with("topic") {
                 field.fast = Some(true);
@@ -262,7 +262,7 @@ impl QuickwitClient {
     pub async fn write_csv_to_quickwit(&self, table_name: &str, csv_writer: &CsvWriter) {
         let index_id = self.get_index_id(table_name);
         let column_map = &self.table_map[table_name];
-        
+
         // Read CSV and convert to JSON documents
         match self.csv_to_documents(csv_writer.path(), column_map) {
             Ok(documents) => {
@@ -278,12 +278,12 @@ impl QuickwitClient {
                     } else {
                         self.ingest_documents_native(&index_id, chunk).await
                     };
-                    
+
                     if let Err(e) = result {
                         println!("Failed to ingest batch for {}: {:?}", table_name, e);
                     }
                 }
-                
+
                 println!("Successfully ingested {} documents to {}", documents.len(), index_id);
             }
             Err(e) => {
@@ -297,22 +297,22 @@ impl QuickwitClient {
         let file = File::open(csv_path)?;
         let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(file);
         let headers = rdr.headers()?.clone();
-        
+
         let mut documents = Vec::new();
-        
+
         for result in rdr.records() {
             let record = result?;
             let mut doc = json!({});
-            
+
             for (i, value) in record.iter().enumerate() {
                 if let Some(header) = headers.get(i) {
                     // Skip empty topic fields to save storage and improve performance
                     if header.starts_with("topic") && value.is_empty() {
                         continue;
                     }
-                    
+
                     let field_type = column_map.get(header).map(|s| s.as_str()).unwrap_or("string");
-                    
+
                     // Convert value based on field type
                     let json_value = match (header, field_type) {
                         ("log_index", _) | ("transaction_index", _) => {
@@ -327,21 +327,21 @@ impl QuickwitClient {
                         }
                         _ => json!(value),
                     };
-                    
+
                     doc[header] = json_value;
                 }
             }
-            
+
             // Convert timestamp to RFC3339 format for Quickwit
             if let Some(timestamp) = doc.get("timestamp").and_then(|v| v.as_i64()) {
                 let dt = DateTime::<Utc>::from_timestamp(timestamp, 0)
                     .unwrap_or_else(|| Utc::now());
                 doc["timestamp"] = json!(dt.to_rfc3339());
             }
-            
+
             documents.push(doc);
         }
-        
+
         Ok(documents)
     }
 
@@ -349,29 +349,29 @@ impl QuickwitClient {
     async fn ingest_documents_native(&self, index_id: &str, documents: &[Value]) -> Result<(), Box<dyn Error>> {
         let start = std::time::Instant::now();
         let url = format!("{}/api/v1/{}/ingest", self.api_endpoint, index_id);
-        
+
         // Convert documents to NDJSON format
         let ndjson = documents
             .iter()
             .map(|doc| serde_json::to_string(doc))
             .collect::<Result<Vec<_>, _>>()?
             .join("\n");
-        
+
         let response = self.http_client
             .post(&url)
             .header("Content-Type", "application/x-ndjson")
             .body(ndjson)
             .send()
             .await?;
-        
+
         if !response.status().is_success() {
             let error_text = response.text().await?;
             return Err(format!("Failed to ingest documents: {}", error_text).into());
         }
-        
+
         let elapsed = start.elapsed();
         println!("    Native API: Ingested {} docs in {:?}", documents.len(), elapsed);
-        
+
         Ok(())
     }
 
@@ -379,7 +379,7 @@ impl QuickwitClient {
     async fn ingest_documents_es_bulk(&self, index_id: &str, documents: &[Value]) -> Result<(), Box<dyn Error>> {
         let start = std::time::Instant::now();
         let url = format!("{}/api/v1/_elastic/_bulk", self.api_endpoint);
-        
+
         // Convert documents to ES bulk format
         let mut bulk_body = String::new();
         for doc in documents {
@@ -391,24 +391,24 @@ impl QuickwitClient {
             });
             bulk_body.push_str(&serde_json::to_string(&action)?);
             bulk_body.push('\n');
-            
+
             // Document line
             bulk_body.push_str(&serde_json::to_string(doc)?);
             bulk_body.push('\n');
         }
-        
+
         let response = self.http_client
             .post(&url)
             .header("Content-Type", "application/x-ndjson")
             .body(bulk_body)
             .send()
             .await?;
-        
+
         if !response.status().is_success() {
             let error_text = response.text().await?;
             return Err(format!("Failed to ingest documents via ES bulk: {}", error_text).into());
         }
-        
+
         // Parse response to check for errors
         let bulk_response: Value = response.json().await?;
         if let Some(errors) = bulk_response.get("errors").and_then(|v| v.as_bool()) {
@@ -416,54 +416,54 @@ impl QuickwitClient {
                 return Err("ES bulk API reported errors in response".into());
             }
         }
-        
+
         let elapsed = start.elapsed();
         println!("    ES Bulk API: Ingested {} docs in {:?}", documents.len(), elapsed);
-        
+
         Ok(())
     }
-    
+
     /// Search for logs in Quickwit
     pub async fn search_logs(&self, index_suffix: &str, request: QuickwitSearchRequest) -> Result<QuickwitSearchResponse, Box<dyn Error>> {
         let index_id = self.get_index_id(index_suffix);
         let url = format!("{}/api/v1/{}/search", self.api_endpoint, index_id);
-        
+
         // Quickwit search API doesn't use start/end timestamp in the body
         // Timestamps should be part of the query string if needed
         let search_body = json!({
             "query": request.query,
             "max_hits": request.max_hits,
         });
-        
+
         let response = self.http_client
             .post(&url)
             .json(&search_body)
             .send()
             .await?;
-        
+
         if !response.status().is_success() {
             let error_text = response.text().await?;
             return Err(format!("Search failed: {}", error_text).into());
         }
-        
+
         let search_result: Value = response.json().await?;
-        
+
         // Extract hits from response
         let hits = search_result.get("hits")
             .and_then(|h| h.as_array())
             .map(|arr| arr.to_vec())
             .unwrap_or_default();
-        
+
         Ok(QuickwitSearchResponse {
             num_hits: hits.len(),
             hits,
         })
     }
-    
+
     /// Search across all event indexes
     pub async fn search_all_logs(&self, request: QuickwitSearchRequest) -> Result<QuickwitSearchResponse, Box<dyn Error>> {
         let mut all_hits = Vec::new();
-        
+
         // Search in each event type index
         for table_name in self.table_map.keys() {
             match self.search_logs(table_name, request.clone()).await {
@@ -476,26 +476,26 @@ impl QuickwitClient {
                 }
             }
         }
-        
+
         // Sort by block number and log index for consistent ordering
         all_hits.sort_by(|a, b| {
             let a_block = a.get("block_number").and_then(|v| v.as_u64()).unwrap_or(0);
             let b_block = b.get("block_number").and_then(|v| v.as_u64()).unwrap_or(0);
             let a_log_idx = a.get("log_index").and_then(|v| v.as_u64()).unwrap_or(0);
             let b_log_idx = b.get("log_index").and_then(|v| v.as_u64()).unwrap_or(0);
-            
+
             a_block.cmp(&b_block).then(a_log_idx.cmp(&b_log_idx))
         });
-        
+
         // Limit results to max_hits
         all_hits.truncate(request.max_hits);
-        
+
         Ok(QuickwitSearchResponse {
             num_hits: all_hits.len(),
             hits: all_hits,
         })
     }
-    
+
     /// Get all event table names
     #[allow(dead_code)]
     pub fn get_event_types(&self) -> Vec<String> {
