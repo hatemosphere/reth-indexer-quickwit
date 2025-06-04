@@ -4,7 +4,7 @@ A high-performance Ethereum event indexer that reads directly from Reth node's d
 
 ## Overview
 
-reth-indexer achieves ~70x performance improvement over JSON-RPC based indexers by reading directly from Reth's database. It indexes blockchain events into Quickwit (a distributed search engine) and exposes them through a standard Ethereum RPC interface.
+reth-indexer is reading directly from Reth's database. It indexes blockchain events into Quickwit (a distributed search engine) and exposes them through a standard Ethereum RPC interface.
 
 ### Key Features
 
@@ -205,14 +205,6 @@ curl -X POST http://localhost:8545 \
     "id": 1
   }'
 ```
-
-## Performance
-
-### Benchmarks
-
-- **Indexing Speed**: ~30,000 events/second
-- **Block Processing**: ~10,000 empty blocks in 400ms (with bloom filters)
-- **Comparison**: 73.5x faster than The Graph's Substreams
 
 ### Optimization Tips
 
