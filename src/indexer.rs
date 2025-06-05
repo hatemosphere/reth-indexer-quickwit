@@ -307,11 +307,6 @@ pub async fn sync(indexer_config: &IndexerConfig) {
                     let rpc_bloom: Bloom =
                         Bloom::from_str(&format!("{:?}", header_tx_info.logs_bloom)).unwrap();
 
-                    // Debug: check if bloom filter has any data
-                    if !header_tx_info.logs_bloom.is_zero() {
-                        println!("  Block {} has non-zero bloom filter", block_number);
-                    }
-
                     if let Some(contract_addresses) = &mapping.filter_by_contract_addresses {
                         if !contract_addresses.is_empty() {
                             // check at least 1 matches bloom in mapping file
