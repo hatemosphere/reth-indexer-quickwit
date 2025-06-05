@@ -44,14 +44,9 @@ pub struct ABIItem {
 /// Represents a contract mapping in the Indexer.
 #[derive(Debug, Deserialize, Clone)]
 pub struct IndexerContractMapping {
-    /// The contract address.
-    #[serde(rename = "filterByContractAddress")]
-    // pub contract_address: Option<Address>,
+    /// The contract address filter.
+    #[serde(rename = "filterByContractAddresses")]
     pub filter_by_contract_addresses: Option<Vec<Address>>,
-
-    /// How often to sync data from CSV to the configured datasources.
-    #[serde(rename = "syncBackRoughlyEveryNLogs")]
-    pub sync_back_every_n_log: u64,
 
     /// The list of ABI items to decode.
     #[serde(rename = "decodeAbiItems")]
@@ -103,6 +98,11 @@ fn default_batch_size() -> usize {
     1000
 }
 
+fn default_csv_sync_threshold() -> usize {
+    10000
+}
+
+
 #[derive(Debug, Deserialize)]
 pub struct IndexerConfig {
     /// The location of the rethDB.
@@ -116,6 +116,10 @@ pub struct IndexerConfig {
     /// Include ETH transfers in indexing
     #[serde(rename = "ethTransfers", default = "default_false")]
     pub include_eth_transfers: bool,
+    
+    /// CSV sync threshold - sync to database every N records (default: 10000)
+    #[serde(rename = "csvSyncThreshold", default = "default_csv_sync_threshold")]
+    pub csv_sync_threshold: usize,
 
     /// The starting block number.
     #[serde(rename = "fromBlockNumber")]

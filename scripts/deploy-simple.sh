@@ -44,7 +44,7 @@ for i in $(seq 1 10000); do
     "1000000000000000000"; then
     echo "  ✓ Transfer $i successful"
   else
-    echo "  ✗ Transfer $i failed, retrying in 3 seconds..."
+    echo "  ✗ Transfer $i failed, retrying..."
     sleep 0.1
     # Retry once
     cast send --rpc-url http://reth-dev:8545 \
@@ -55,12 +55,9 @@ for i in $(seq 1 10000); do
       "1000000000000000000" || echo "  ✗ Transfer $i failed on retry"
   fi
 
-  # Add small delay between each transfer
-  sleep 0.1
-
-  # Longer pause every 10 transfers
-  if [ $((i % 10)) -eq 0 ]; then
-    echo "Pausing at transfer $i (10 transfers completed)..."
+  # Longer pause every 100 transfers
+  if [ $((i % 100)) -eq 0 ]; then
+    echo "Pausing at transfer $i (100 transfers completed)..."
     sleep 0.5
   fi
 done

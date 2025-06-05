@@ -28,7 +28,7 @@ reth-indexer is reading directly from Reth's database. It indexes blockchain eve
 
 ### Prerequisites
 
-- Rust 1.82.0 or later
+- Rust 1.87.0 or later
 - Running Reth node with database v2 (on the same machine)
   - Reth database v2 is fully supported
   - Reth database v1 compatibility is not guaranteed

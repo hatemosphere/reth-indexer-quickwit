@@ -1,13 +1,14 @@
 {
   "rethDBLocation": "./data/reth-dev/dev",
   "csvLocation": "./data/csv",
+  "csvSyncThreshold": 10000,
   "fromBlockNumber": 0,
-  "toBlockNumber": 1000,
+  "toBlockNumber": null,
   "quickwit": {
     "apiEndpoint": "http://localhost:7280",
     "indexPrefix": "reth-events",
     "dataDirectory": "./data/quickwit",
-    "batchSize": 100,
+    "batchSize": 1000,
     "recreateIndexes": true,
     "useEsBulkApi": false
   },
@@ -40,8 +41,7 @@
           "type": "event"
         }
       ],
-      "syncBackRoughlyEveryNLogs": 100,
-      "filter_by_contract_addresses": []
+      "filterByContractAddresses": []
     }
   ]
 }

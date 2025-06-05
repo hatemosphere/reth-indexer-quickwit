@@ -20,6 +20,7 @@ const ETH_TRANSFER_TABLE_NAME: &str = "eth_transfer";
 /// * `write_path` - The path to write the CSV files.
 /// * `indexer_contract_mappings` - The list of indexer contract mappings.
 /// * `include_eth_transfers` - Indicates whether to include ETH transfers in the writers.
+/// * `sync_threshold` - How many records to write before syncing to database.
 ///
 /// # Returns
 ///
@@ -28,6 +29,7 @@ pub fn create_csv_writers(
     write_path: &Path,
     indexer_contract_mappings: &[IndexerContractMapping],
     include_eth_transfers: bool,
+    sync_threshold: usize,
 ) -> Vec<CsvWriter> {
     let mut writers: Vec<CsvWriter> = indexer_contract_mappings
         .iter()
@@ -37,6 +39,7 @@ pub fn create_csv_writers(
                     abi_item.name.clone(),
                     write_path,
                     csv_event_columns(abi_item),
+                    sync_threshold,
                 )
             })
         })
@@ -54,6 +57,7 @@ pub fn create_csv_writers(
                 "block_hash".to_string(),
                 "timestamp".to_string(),
             ],
+            sync_threshold,
         ));
     }
 
@@ -149,11 +153,11 @@ pub struct CsvWriter {
 
     columns: Vec<String>,
     
-    /// Number of records written since last flush
-    records_since_flush: usize,
+    /// Total number of records written to this CSV
+    total_records: usize,
     
-    /// Flush every N records for better performance
-    flush_interval: usize,
+    /// Sync to database every N records
+    sync_threshold: usize,
 }
 
 impl CsvWriter {
@@ -164,11 +168,12 @@ impl CsvWriter {
     /// * `name` - The name of the CSV writer.
     /// * `path_folder` - The path to the folder where the CSV file will be created.
     /// * `columns` - The columns of the CSV file.
+    /// * `sync_threshold` - How often to sync to database.
     ///
     /// # Returns
     ///
     /// A new `CsvWriter` instance.
-    pub fn new(name: String, path_folder: &Path, columns: Vec<String>) -> Self {
+    pub fn new(name: String, path_folder: &Path, columns: Vec<String>, sync_threshold: usize) -> Self {
         let path_to_csv = path_folder.join(&name).with_extension("csv");
 
         // remove csv file if it exists (ignore result)
@@ -179,8 +184,8 @@ impl CsvWriter {
             writer: create_writer(path_to_csv.as_path(), &columns),
             path_to_csv,
             columns,
-            records_since_flush: 0,
-            flush_interval: 1000, // Flush every 1000 records for better performance
+            total_records: 0,
+            sync_threshold,
         }
     }
 
@@ -198,19 +203,25 @@ impl CsvWriter {
             .write_record(&records)
             .expect("Failed to write records to CSV");
         
-        self.records_since_flush += 1;
+        self.total_records += 1;
         
-        // Only flush periodically for better performance
-        if self.records_since_flush >= self.flush_interval {
-            self.writer.flush().expect("Failed to flush CSV writer");
-            self.records_since_flush = 0;
-        }
+        // Flush every time for data integrity
+        self.writer.flush().expect("Failed to flush CSV writer");
     }
     
     /// Force a flush of the CSV writer.
     pub fn flush(&mut self) {
         self.writer.flush().expect("Failed to flush CSV writer");
-        self.records_since_flush = 0;
+    }
+    
+    /// Check if we should sync to database based on record count
+    pub fn should_sync(&self) -> bool {
+        self.total_records > 0 && self.total_records % self.sync_threshold == 0
+    }
+    
+    /// Get the total number of records written
+    pub fn get_total_records(&self) -> usize {
+        self.total_records
     }
 
     /// Deletes the CSV file associated with this CsvWriter.
@@ -231,6 +242,7 @@ impl CsvWriter {
     pub fn reset(&mut self) {
         self.delete();
         self.writer = create_writer(&self.path_to_csv, &self.columns);
+        self.total_records = 0;
     }
 
     /// Returns the path to the CSV file.
@@ -242,18 +254,4 @@ impl CsvWriter {
         self.path_to_csv.to_str().unwrap()
     }
 
-    /// Returns the size of a CSV file in kilobytes.
-    ///
-    /// # Arguments
-    ///
-    /// * `path_to_csv` - The path to the CSV file.
-    ///
-    /// # Returns
-    ///
-    /// The size of the CSV file in kilobytes.
-    pub fn get_kb_file_size(&self) -> u64 {
-        let metadata = fs::metadata(&self.path_to_csv).expect("Failed to retrieve file metadata");
-        let size = metadata.len();
-        size / 1024
-    }
 }
