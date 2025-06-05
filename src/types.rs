@@ -88,10 +88,6 @@ pub struct IndexerQuickwitConfig {
     /// Whether to recreate indexes on startup
     #[serde(rename = "recreateIndexes", default = "default_false")]
     pub recreate_indexes: bool,
-
-    /// Whether to use Elasticsearch bulk API instead of native Quickwit API
-    #[serde(rename = "useEsBulkApi", default = "default_false")]
-    pub use_es_bulk_api: bool,
 }
 
 fn default_batch_size() -> usize {

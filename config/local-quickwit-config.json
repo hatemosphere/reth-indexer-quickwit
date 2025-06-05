@@ -8,9 +8,8 @@
     "apiEndpoint": "http://localhost:7280",
     "indexPrefix": "reth-events",
     "dataDirectory": "./data/quickwit",
-    "batchSize": 1000,
-    "recreateIndexes": true,
-    "useEsBulkApi": false
+    "batchSize": 5000,
+    "recreateIndexes": true
   },
   "eventMappings": [
     {

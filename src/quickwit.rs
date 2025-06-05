@@ -12,18 +12,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{any::Any, collections::HashMap, error::Error, fs, fs::File, path::Path};
 
-// Performance optimization opportunities:
-// - Use `elasticsearch` crate for optimized ES bulk operations when useEsBulkApi is enabled
-// - Consider `tantivy` for direct index manipulation (Quickwit is built on Tantivy) for better performance
-// - HTTP client already reuses connections via reqwest's built-in connection pooling
-// - For now, the simple HTTP API approach is sufficient and maintains compatibility
-
+#[derive(Clone)]
 pub struct QuickwitClient {
     pub(crate) api_endpoint: String,
     pub(crate) index_prefix: String,
     batch_size: usize,
     recreate_indexes: bool,
-    use_es_bulk_api: bool,
     http_client: Client,
     table_map: HashMap<String, IndexMap<String, String>>,
 }
@@ -133,10 +127,11 @@ impl QuickwitClient {
             index_prefix: indexer_quickwit_config.index_prefix.clone(),
             batch_size: indexer_quickwit_config.batch_size,
             recreate_indexes: indexer_quickwit_config.recreate_indexes,
-            use_es_bulk_api: indexer_quickwit_config.use_es_bulk_api,
             http_client: Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .pool_max_idle_per_host(10)
+                .timeout(std::time::Duration::from_secs(60))
+                .pool_max_idle_per_host(50)
+                .pool_idle_timeout(std::time::Duration::from_secs(90))
+                .http2_adaptive_window(true)
                 .build()
                 .unwrap(),
             table_map,
@@ -245,7 +240,7 @@ impl QuickwitClient {
                 timestamp_field: "timestamp".to_string(),
             },
             indexing_settings: IndexingSettings {
-                commit_timeout_secs: 30,
+                commit_timeout_secs: 60,  // Increase for better bulk performance
             },
             search_settings: SearchSettings {
                 default_search_fields: vec!["contract_address".to_string(), "tx_hash".to_string()],
@@ -273,13 +268,7 @@ impl QuickwitClient {
 
                 // Ingest documents in batches
                 for chunk in documents.chunks(self.batch_size) {
-                    let result = if self.use_es_bulk_api {
-                        self.ingest_documents_es_bulk(&index_id, chunk).await
-                    } else {
-                        self.ingest_documents_native(&index_id, chunk).await
-                    };
-
-                    if let Err(e) = result {
+                    if let Err(e) = self.ingest_documents_native(&index_id, chunk).await {
                         println!("Failed to ingest batch for {}: {:?}", table_name, e);
                     }
                 }
@@ -370,58 +359,11 @@ impl QuickwitClient {
         }
 
         let elapsed = start.elapsed();
-        println!("    Native API: Ingested {} docs in {:?}", documents.len(), elapsed);
+        println!("    Ingested {} docs in {:?}", documents.len(), elapsed);
 
         Ok(())
     }
 
-    /// Ingest documents using Elasticsearch Bulk API
-    async fn ingest_documents_es_bulk(&self, index_id: &str, documents: &[Value]) -> Result<(), Box<dyn Error>> {
-        let start = std::time::Instant::now();
-        let url = format!("{}/api/v1/_elastic/_bulk", self.api_endpoint);
-
-        // Convert documents to ES bulk format
-        let mut bulk_body = String::new();
-        for doc in documents {
-            // Action line
-            let action = json!({
-                "index": {
-                    "_index": index_id,
-                }
-            });
-            bulk_body.push_str(&serde_json::to_string(&action)?);
-            bulk_body.push('\n');
-
-            // Document line
-            bulk_body.push_str(&serde_json::to_string(doc)?);
-            bulk_body.push('\n');
-        }
-
-        let response = self.http_client
-            .post(&url)
-            .header("Content-Type", "application/x-ndjson")
-            .body(bulk_body)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let error_text = response.text().await?;
-            return Err(format!("Failed to ingest documents via ES bulk: {}", error_text).into());
-        }
-
-        // Parse response to check for errors
-        let bulk_response: Value = response.json().await?;
-        if let Some(errors) = bulk_response.get("errors").and_then(|v| v.as_bool()) {
-            if errors {
-                return Err("ES bulk API reported errors in response".into());
-            }
-        }
-
-        let elapsed = start.elapsed();
-        println!("    ES Bulk API: Ingested {} docs in {:?}", documents.len(), elapsed);
-
-        Ok(())
-    }
 
     /// Search for logs in Quickwit
     pub async fn search_logs(&self, index_suffix: &str, request: QuickwitSearchRequest) -> Result<QuickwitSearchResponse, Box<dyn Error>> {
