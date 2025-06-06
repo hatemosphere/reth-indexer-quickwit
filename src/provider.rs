@@ -1,12 +1,12 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use log::info;
 use reth_chainspec::ChainSpecBuilder;
 use reth_db::{mdbx::DatabaseArguments, open_db_read_only, DatabaseEnv};
 use reth_node_ethereum::EthereumNode;
 use reth_node_types::NodeTypesWithDBAdapter;
 use reth_provider::{providers::StaticFileProvider, ProviderFactory};
+use tracing::info;
 
 use crate::error::IndexerError;
 

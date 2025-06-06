@@ -1,10 +1,10 @@
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types::{BlockNumberOrTag, Filter, FilterBlockOption, Log as RpcLog};
 use axum::{extract::State, http::StatusCode, response::Json, routing::post, Router};
-use log::info;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{str::FromStr, sync::Arc};
+use tracing::info;
 
 use crate::quickwit::{QuickwitClient, QuickwitSearchRequest};
 

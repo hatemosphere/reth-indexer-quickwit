@@ -4,8 +4,8 @@ use crate::{
     types::{IndexerConfig, IndexerContractMapping},
 };
 use async_trait::async_trait;
-use log::warn;
 use std::collections::HashMap;
+use tracing::warn;
 
 /// Factory trait for creating datasource instances
 #[async_trait]

@@ -10,6 +10,8 @@ pub enum IndexerError {
     Io(std::io::Error),
     Json(serde_json::Error),
     Quickwit(String),
+    File(String),
+    Csv(String),
 }
 
 impl fmt::Display for IndexerError {
@@ -22,6 +24,8 @@ impl fmt::Display for IndexerError {
             IndexerError::Io(err) => write!(f, "IO error: {}", err),
             IndexerError::Json(err) => write!(f, "JSON error: {}", err),
             IndexerError::Quickwit(msg) => write!(f, "Quickwit error: {}", msg),
+            IndexerError::File(msg) => write!(f, "File error: {}", msg),
+            IndexerError::Csv(msg) => write!(f, "CSV error: {}", msg),
         }
     }
 }

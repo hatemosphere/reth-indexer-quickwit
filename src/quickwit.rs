@@ -5,13 +5,13 @@ use crate::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use csv::{ReaderBuilder, StringRecord};
+use csv::ReaderBuilder;
 use indexmap::IndexMap;
-use log::{debug, error, info, warn};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::{any::Any, collections::HashMap, error::Error, fs, fs::File, path::Path};
+use tracing::{error, info};
 
 #[derive(Clone)]
 pub struct QuickwitClient {

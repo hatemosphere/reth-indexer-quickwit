@@ -12,8 +12,8 @@ mod types;
 
 use crate::error::IndexerError;
 use crate::indexer::sync;
-use log::{error, info};
 use std::path::Path;
+use tracing::{error, info};
 use types::IndexerConfig;
 
 // We use jemalloc for performance reasons
@@ -40,7 +40,14 @@ fn load_indexer_config(file_path: &Path) -> Result<IndexerConfig, IndexerError> 
 #[tokio::main]
 async fn main() {
     // Initialize the logger
-    env_logger::init();
+    let subscriber = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_thread_ids(true)
+        .with_thread_names(true)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("Failed to set the global tracing subscriber");
+    tracing_log::LogTracer::init().expect("Failed to initialize log tracer");
 
     // Check for RPC mode
     let rpc_mode: bool = std::env::var("RPC").map(|_| true).unwrap_or(false);

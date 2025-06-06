@@ -6,6 +6,7 @@ use indexmap::IndexMap;
 use phf::phf_ordered_map;
 use polars::prelude::*;
 use std::{any::Any, collections::HashMap, fs::File};
+use tracing::warn;
 
 ///  Common trait for writeable datasources
 ///  This interface will be implemented by each writer to allow for
@@ -76,7 +77,7 @@ pub fn load_table_configs(
                     }
                     Err(e) => {
                         // Log warning but continue processing
-                        log::warn!("Failed to map type for {}: {}", input.name, e);
+                        warn!("Failed to map type for {}: {}", input.name, e);
                         // Default to string type
                         column_type_map.insert(input.name.clone(), "string".to_string());
                     }
@@ -141,28 +142,26 @@ pub fn read_csv_to_polars(
     let column_names: Vec<String> = headers.iter().map(String::from).collect();
 
     //  Build column data types for polars dataframe, from column mapping
-    let mut fields = Vec::new();
+    let mut schema = Schema::with_capacity(column_names.len());
     for name in &column_names {
-        let field = match column_map.get(name).map(|s| s.as_str()) {
-            Some("int") => Field::new(name.clone().into(), DataType::Int64),
-            Some("string") => Field::new(name.clone().into(), DataType::String),
+        let dtype = match column_map.get(name.as_str()).map(|s| s.as_str()) {
+            Some("int") => DataType::Int64,
+            Some("string") => DataType::String,
             _ => {
-                log::warn!("Unknown type for column {}, defaulting to string", name);
-                Field::new(name.clone().into(), DataType::String)
+                warn!("Unknown type for column {}, defaulting to string", name);
+                DataType::String
             }
         };
-        fields.push(field);
+        schema.with_column(name.clone().into(), dtype);
     }
-    let plr_col_types = Some(Arc::new(fields));
 
-    //  Read polars dataframe, w/ specified schema
+    let file = File::open(path)?;
     let df = CsvReadOptions::default()
         .with_has_header(true)
-        .with_schema(plr_col_types)
-        .try_into_reader_with_file_path(Some(path.into()))
-        .map_err(|e| IndexerError::Csv(format!("Failed to create CSV reader: {}", e)))?
+        .with_schema(Some(Arc::new(schema)))
+        .into_reader_with_file_handle(file)
         .finish()
-        .map_err(|e| IndexerError::Csv(format!("Failed to read CSV into DataFrame: {}", e)))?;
+        .map_err(|e| IndexerError::Csv(format!("Failed to read CSV: {}", e)))?;
 
     Ok(df)
 }

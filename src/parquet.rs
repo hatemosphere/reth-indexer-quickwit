@@ -5,9 +5,9 @@ use crate::{
 };
 use async_trait::async_trait;
 use indexmap::IndexMap;
-use log::{error, info};
 use polars::prelude::*;
 use std::{any::Any, collections::HashMap, error::Error, fs, fs::File, path::Path};
+use tracing::{error, info};
 
 pub struct ParquetClient {
     data_directory: String,

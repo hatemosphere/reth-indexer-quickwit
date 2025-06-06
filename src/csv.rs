@@ -218,9 +218,9 @@ impl CsvWriter {
         &mut self.writer
     }
 
-    /// Increment the record count after a direct write.
-    pub fn increment_record_count(&mut self) {
-        self.total_records += 1;
+    /// Increment the record count by a specific amount.
+    pub fn increment_record_count_by(&mut self, amount: usize) {
+        self.total_records += amount;
     }
 
     /// Force a flush of the CSV writer.
