@@ -10,11 +10,11 @@ mod quickwit;
 mod rpc;
 mod types;
 
-use crate::indexer::sync;
 use crate::error::IndexerError;
+use crate::indexer::sync;
+use log::{error, info};
 use std::path::Path;
 use types::IndexerConfig;
-use log::{info, error};
 
 // We use jemalloc for performance reasons
 #[cfg(feature = "jemalloc")]
@@ -24,8 +24,12 @@ static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 /// Loads the indexer configuration from the specified file path.
 /// Returns the loaded `IndexerConfig` if successful.
 fn load_indexer_config(file_path: &Path) -> Result<IndexerConfig, IndexerError> {
-    let content = std::fs::read_to_string(file_path)
-        .map_err(|e| IndexerError::Config(format!("Failed to read config file at {:?}: {}", file_path, e)))?;
+    let content = std::fs::read_to_string(file_path).map_err(|e| {
+        IndexerError::Config(format!(
+            "Failed to read config file at {:?}: {}",
+            file_path, e
+        ))
+    })?;
 
     let config: IndexerConfig = serde_json::from_str(&content)
         .map_err(|e| IndexerError::Config(format!("Failed to parse config JSON: {}", e)))?;

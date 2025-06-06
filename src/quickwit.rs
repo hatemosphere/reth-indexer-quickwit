@@ -7,10 +7,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use csv::{ReaderBuilder, StringRecord};
 use indexmap::IndexMap;
+use log::{debug, error, info, warn};
 use reqwest::Client;
-use log::{info, warn, error, debug};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value, Map};
+use serde_json::{json, Map, Value};
 use std::{any::Any, collections::HashMap, error::Error, fs, fs::File, path::Path};
 
 #[derive(Clone)]
@@ -310,10 +310,7 @@ impl QuickwitClient {
         let header_info: Vec<(&str, &str)> = headers
             .iter()
             .map(|h| {
-                let field_type = column_map
-                    .get(h)
-                    .map(|s| s.as_str())
-                    .unwrap_or("string");
+                let field_type = column_map.get(h).map(|s| s.as_str()).unwrap_or("string");
                 (h, field_type)
             })
             .collect();
@@ -355,8 +352,8 @@ impl QuickwitClient {
             // Convert timestamp to RFC3339 format for Quickwit
             if let Some(Value::Number(n)) = doc.get("timestamp") {
                 if let Some(timestamp) = n.as_i64() {
-                    let dt = DateTime::<Utc>::from_timestamp(timestamp, 0)
-                        .unwrap_or_else(|| Utc::now());
+                    let dt =
+                        DateTime::<Utc>::from_timestamp(timestamp, 0).unwrap_or_else(|| Utc::now());
                     doc.insert("timestamp".to_string(), Value::String(dt.to_rfc3339()));
                 }
             }
@@ -483,7 +480,6 @@ impl QuickwitClient {
             hits: all_hits,
         })
     }
-
 }
 
 /// Implement DatasourceWritable trait

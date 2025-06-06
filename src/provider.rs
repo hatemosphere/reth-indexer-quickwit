@@ -29,7 +29,9 @@ pub fn get_reth_factory_with_db(
     // Use dev chainspec for local development
     let spec = ChainSpecBuilder::mainnet().cancun_activated().build();
     let static_file_provider = StaticFileProvider::read_only(path.join("static_files"), true)
-        .map_err(|e| IndexerError::Provider(format!("Failed to create static file provider: {}", e)))?;
+        .map_err(|e| {
+            IndexerError::Provider(format!("Failed to create static file provider: {}", e))
+        })?;
 
     let factory = ProviderFactory::<NodeTypesWithDBAdapter<EthereumNode, Arc<DatabaseEnv>>>::new(
         db,
@@ -39,4 +41,3 @@ pub fn get_reth_factory_with_db(
 
     Ok(factory)
 }
-

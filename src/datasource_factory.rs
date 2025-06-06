@@ -54,11 +54,7 @@ impl DatasourceRegistry {
                 match factory.create(config, &config.event_mappings).await {
                     Ok(writer) => writers.push(writer),
                     Err(e) => {
-                        warn!(
-                            "Failed to initialize {} datasource: {}",
-                            factory.name(),
-                            e
-                        );
+                        warn!("Failed to initialize {} datasource: {}", factory.name(), e);
                     }
                 }
             }

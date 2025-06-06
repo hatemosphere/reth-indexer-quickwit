@@ -1,4 +1,4 @@
-use crate::{csv::CsvWriter, types::IndexerContractMapping, error::IndexerError};
+use crate::{csv::CsvWriter, error::IndexerError, types::IndexerContractMapping};
 use async_trait::async_trait;
 
 use csv::ReaderBuilder;
@@ -109,7 +109,10 @@ pub fn solidity_type_to_db_type(abi_type: &str) -> Result<&str, IndexerError> {
         "bool" | "bytes" | "string" | "int256" | "uint256" => Ok("string"),
         "uint8" | "uint16" | "uint32" | "uint64" | "uint128" | "int8" | "int16" | "int32"
         | "int64" | "int128" => Ok("int"),
-        _ => Err(IndexerError::Decode(format!("Unsupported type {}", abi_type))),
+        _ => Err(IndexerError::Decode(format!(
+            "Unsupported type {}",
+            abi_type
+        ))),
     }
 }
 
@@ -124,12 +127,16 @@ pub fn solidity_type_to_db_type(abi_type: &str) -> Result<&str, IndexerError> {
 ///
 /// * `table_name` - name of table for dataset
 /// * `path` - path to csv file
-pub fn read_csv_to_polars(path: &str, column_map: &IndexMap<String, String>) -> Result<DataFrame, IndexerError> {
+pub fn read_csv_to_polars(
+    path: &str,
+    column_map: &IndexMap<String, String>,
+) -> Result<DataFrame, IndexerError> {
     //  Get list of columns in order, from csv file
     let file = File::open(path)
         .map_err(|e| IndexerError::File(format!("Failed to open CSV file {}: {}", path, e)))?;
     let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(file);
-    let headers = rdr.headers()
+    let headers = rdr
+        .headers()
         .map_err(|e| IndexerError::Csv(format!("Failed to read CSV headers: {}", e)))?;
     let column_names: Vec<String> = headers.iter().map(String::from).collect();
 
@@ -156,6 +163,6 @@ pub fn read_csv_to_polars(path: &str, column_map: &IndexMap<String, String>) -> 
         .map_err(|e| IndexerError::Csv(format!("Failed to create CSV reader: {}", e)))?
         .finish()
         .map_err(|e| IndexerError::Csv(format!("Failed to read CSV into DataFrame: {}", e)))?;
-    
+
     Ok(df)
 }

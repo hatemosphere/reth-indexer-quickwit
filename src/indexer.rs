@@ -6,7 +6,7 @@ use std::{
 use alloy_consensus::{Transaction, TxReceipt};
 use alloy_primitives::{hex::ToHexExt, Address, Bloom, Sealable, B256 as H256};
 use alloy_rpc_types::{FilterSet, FilteredParams};
-use log::{info, error, debug, warn};
+use log::{debug, error, info, warn};
 use reth_primitives::{Header, Log};
 use reth_primitives_traits::{SignedTransaction, SignerRecoverable};
 use reth_provider::{
@@ -44,20 +44,20 @@ fn write_csv_state_record(
     tx_index: u64,
 ) {
     use csv::ByteRecord;
-    
+
     let writer = csv_writer.get_writer();
-    
+
     for (log_index, (decoded_log, raw_log)) in decoded_logs.iter().enumerate() {
         let mut record = ByteRecord::new();
-        
+
         // Write fields directly to avoid intermediate allocations
         record.push_field(uuid::Uuid::new_v4().to_string().as_bytes());
         record.push_field(format!("{:?}", decoded_log.address).as_bytes());
-        
+
         // Add raw log fields for eth_getLogs compatibility
         record.push_field(log_index.to_string().as_bytes());
         record.push_field(tx_index.to_string().as_bytes());
-        
+
         // Add topics (topic0 is always present, others may be empty)
         let topics = raw_log.topics();
         for i in 0..4 {
@@ -67,7 +67,7 @@ fn write_csv_state_record(
                 record.push_field(b"");
             }
         }
-        
+
         // Add raw data field - more efficient hex encoding
         if raw_log.data.data.is_empty() {
             record.push_field(b"0x");
@@ -75,23 +75,24 @@ fn write_csv_state_record(
             let hex_data = format!("0x{}", raw_log.data.data.encode_hex());
             record.push_field(hex_data.as_bytes());
         }
-        
+
         // Add decoded values
         for input in &decoded_log.topics {
             record.push_field(input.value.as_bytes());
         }
-        
+
         // Write common information every table has
         record.push_field(format!("{:?}", tx_hash).as_bytes());
         record.push_field(header_tx_info.number.to_string().as_bytes());
         record.push_field(format!("{:?}", block_hash).as_bytes());
         record.push_field(header_tx_info.timestamp.to_string().as_bytes());
-        
-        writer.write_byte_record(&record)
+
+        writer
+            .write_byte_record(&record)
             .expect("Failed to write record to CSV");
         csv_writer.increment_record_count();
     }
-    
+
     // Flush after writing all records for this batch
     writer.flush().expect("Failed to flush CSV writer");
 }
@@ -504,10 +505,7 @@ async fn process_block<P>(
                                         ));
                                         records.push(tx_value.to_string());
                                         records.push(header_tx_info.number.to_string());
-                                        records.push(format!(
-                                            "{:?}",
-                                            block_hash
-                                        ));
+                                        records.push(format!("{:?}", block_hash));
                                         records.push(header_tx_info.timestamp.to_string());
                                         eth_writer.write(records);
                                     }
