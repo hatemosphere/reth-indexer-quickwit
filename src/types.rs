@@ -57,7 +57,6 @@ fn default_false() -> bool {
     false
 }
 
-
 #[derive(Debug, Deserialize)]
 pub struct IndexerParquetConfig {
     #[serde(rename = "dropTableBeforeSync")]
@@ -98,7 +97,6 @@ fn default_csv_sync_threshold() -> usize {
     10000
 }
 
-
 #[derive(Debug, Deserialize)]
 pub struct IndexerConfig {
     /// The location of the rethDB.
@@ -112,7 +110,7 @@ pub struct IndexerConfig {
     /// Include ETH transfers in indexing
     #[serde(rename = "ethTransfers", default = "default_false")]
     pub include_eth_transfers: bool,
-    
+
     /// CSV sync threshold - sync to database every N records (default: 10000)
     #[serde(rename = "csvSyncThreshold", default = "default_csv_sync_threshold")]
     pub csv_sync_threshold: usize,

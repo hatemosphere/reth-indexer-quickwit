@@ -53,7 +53,11 @@ impl DatasourceRegistry {
                 match factory.create(config, &config.event_mappings).await {
                     Ok(writer) => writers.push(writer),
                     Err(e) => {
-                        eprintln!("Warning: Failed to initialize {} datasource: {}", factory.name(), e);
+                        eprintln!(
+                            "Warning: Failed to initialize {} datasource: {}",
+                            factory.name(),
+                            e
+                        );
                     }
                 }
             }
@@ -79,7 +83,9 @@ impl DatasourceFactory for ParquetFactory {
         config: &IndexerConfig,
         event_mappings: &[IndexerContractMapping],
     ) -> Result<Box<dyn DatasourceWritable>, IndexerError> {
-        let parquet_conf = config.parquet.as_ref()
+        let parquet_conf = config
+            .parquet
+            .as_ref()
             .ok_or_else(|| IndexerError::Config("Parquet configuration missing".to_string()))?;
 
         let client = crate::parquet::init_parquet_db(parquet_conf, event_mappings)
@@ -108,7 +114,9 @@ impl DatasourceFactory for QuickwitFactory {
         config: &IndexerConfig,
         event_mappings: &[IndexerContractMapping],
     ) -> Result<Box<dyn DatasourceWritable>, IndexerError> {
-        let quickwit_conf = config.quickwit.as_ref()
+        let quickwit_conf = config
+            .quickwit
+            .as_ref()
             .ok_or_else(|| IndexerError::Config("Quickwit configuration missing".to_string()))?;
 
         let client = crate::quickwit::init_quickwit_db(quickwit_conf, event_mappings)

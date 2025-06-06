@@ -1,15 +1,9 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::Json,
-    routing::post,
-    Router,
-};
+use alloy_primitives::{Address, B256};
+use alloy_rpc_types::{BlockNumberOrTag, Filter, FilterBlockOption, Log as RpcLog};
+use axum::{extract::State, http::StatusCode, response::Json, routing::post, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{sync::Arc, str::FromStr};
-use alloy_primitives::{Address, B256};
-use alloy_rpc_types::{BlockNumberOrTag, FilterBlockOption, Log as RpcLog, Filter};
+use std::{str::FromStr, sync::Arc};
 
 use crate::quickwit::{QuickwitClient, QuickwitSearchRequest};
 
@@ -77,9 +71,7 @@ impl JsonRpcResponse {
 }
 
 pub fn create_rpc_router(state: RpcState) -> Router {
-    Router::new()
-        .route("/", post(handle_rpc))
-        .with_state(state)
+    Router::new().route("/", post(handle_rpc)).with_state(state)
 }
 
 async fn handle_rpc(
@@ -103,18 +95,21 @@ async fn handle_get_logs(
     request: JsonRpcRequest,
 ) -> Result<Json<JsonRpcResponse>, StatusCode> {
     // Parse the filter from params
-    let params_array = request.params.as_array()
+    let params_array = request
+        .params
+        .as_array()
         .ok_or_else(|| StatusCode::BAD_REQUEST)?;
-    let filter: Filter = match serde_json::from_value(params_array.get(0).cloned().unwrap_or_default()) {
-        Ok(f) => f,
-        Err(e) => {
-            return Ok(Json(JsonRpcResponse::error(
-                request.id,
-                -32602,
-                format!("Invalid params: {}", e),
-            )))
-        }
-    };
+    let filter: Filter =
+        match serde_json::from_value(params_array.get(0).cloned().unwrap_or_default()) {
+            Ok(f) => f,
+            Err(e) => {
+                return Ok(Json(JsonRpcResponse::error(
+                    request.id,
+                    -32602,
+                    format!("Invalid params: {}", e),
+                )))
+            }
+        };
 
     // Build Quickwit query
     let query_json = build_quickwit_query(&filter);
@@ -147,10 +142,7 @@ async fn handle_get_logs(
         }
     }
 
-    Ok(Json(JsonRpcResponse::success(
-        request.id,
-        json!(logs),
-    )))
+    Ok(Json(JsonRpcResponse::success(request.id, json!(logs))))
 }
 
 /// Convert a Quickwit search hit to an RPC log
@@ -203,7 +195,9 @@ async fn handle_get_block_by_number(
     request: JsonRpcRequest,
 ) -> Result<Json<JsonRpcResponse>, StatusCode> {
     // Parse params: [blockNumberOrTag, includeTransactions]
-    let params_array = request.params.as_array()
+    let params_array = request
+        .params
+        .as_array()
         .ok_or_else(|| StatusCode::BAD_REQUEST)?;
 
     let block_number_or_tag: BlockNumberOrTag = match params_array.get(0) {
@@ -211,7 +205,8 @@ async fn handle_get_block_by_number(
         None => BlockNumberOrTag::Latest,
     };
 
-    let include_transactions = params_array.get(1)
+    let include_transactions = params_array
+        .get(1)
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
@@ -228,12 +223,12 @@ async fn handle_get_block_by_number(
             };
 
             match state.quickwit_client.search_all_logs(search_req).await {
-                Ok(result) => {
-                    result.hits.get(0)
-                        .and_then(|hit| hit.get("block_number"))
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0)
-                }
+                Ok(result) => result
+                    .hits
+                    .get(0)
+                    .and_then(|hit| hit.get("block_number"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
                 Err(_) => 0,
             }
         }
@@ -272,17 +267,20 @@ async fn handle_get_block_by_number(
 
     // Extract block info from first log
     let first_log = &logs[0];
-    let block_hash = first_log.get("block_hash")
+    let block_hash = first_log
+        .get("block_hash")
         .and_then(|v| v.as_str())
         .unwrap_or("0x0000000000000000000000000000000000000000000000000000000000000000");
-    let timestamp = first_log.get("timestamp")
+    let timestamp = first_log
+        .get("timestamp")
         .and_then(|v| v.as_str())
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.timestamp() as u64)
         .unwrap_or(0);
 
     // Extract unique transaction hashes for the block
-    let mut tx_hashes: Vec<String> = logs.iter()
+    let mut tx_hashes: Vec<String> = logs
+        .iter()
         .filter_map(|log| log.get("tx_hash").and_then(|v| v.as_str()))
         .map(|s| s.to_string())
         .collect();
@@ -328,7 +326,9 @@ async fn handle_get_transaction_receipt(
     request: JsonRpcRequest,
 ) -> Result<Json<JsonRpcResponse>, StatusCode> {
     // Parse params: [transactionHash]
-    let params_array = request.params.as_array()
+    let params_array = request
+        .params
+        .as_array()
         .ok_or_else(|| StatusCode::BAD_REQUEST)?;
 
     let tx_hash = match params_array.get(0).and_then(|v| v.as_str()) {
@@ -367,18 +367,22 @@ async fn handle_get_transaction_receipt(
 
     // Extract receipt info from first log
     let first_log = &logs[0];
-    let block_number = first_log.get("block_number")
+    let block_number = first_log
+        .get("block_number")
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
-    let block_hash = first_log.get("block_hash")
+    let block_hash = first_log
+        .get("block_hash")
         .and_then(|v| v.as_str())
         .unwrap_or("0x0000000000000000000000000000000000000000000000000000000000000000");
-    let transaction_index = first_log.get("transaction_index")
+    let transaction_index = first_log
+        .get("transaction_index")
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
     // Convert logs to RPC format
-    let rpc_logs: Vec<Value> = logs.iter()
+    let rpc_logs: Vec<Value> = logs
+        .iter()
         .filter_map(|hit| quickwit_hit_to_rpc_log(hit.clone()))
         .map(|log| serde_json::to_value(log).unwrap_or(json!({})))
         .collect();
@@ -410,7 +414,10 @@ fn build_quickwit_query(filter: &Filter) -> Value {
 
     // Block range filter
     match &filter.block_option {
-        FilterBlockOption::Range { from_block, to_block } => {
+        FilterBlockOption::Range {
+            from_block,
+            to_block,
+        } => {
             if let Some(from) = from_block {
                 query_parts.push(format!("block_number:[{} TO *]", block_number_to_u64(from)));
             }
@@ -429,7 +436,8 @@ fn build_quickwit_query(filter: &Filter) -> Value {
         let address_query = if addrs.len() == 1 {
             format!("contract_address:{}", addrs[0])
         } else {
-            let addr_list = addrs.iter()
+            let addr_list = addrs
+                .iter()
                 .map(|a| format!("contract_address:{}", a))
                 .collect::<Vec<_>>()
                 .join(" OR ");
@@ -447,7 +455,8 @@ fn build_quickwit_query(filter: &Filter) -> Value {
             let topic_query = if topics.len() == 1 {
                 format!("{}:{}", topic_field, topics[0])
             } else {
-                let topic_list = topics.iter()
+                let topic_list = topics
+                    .iter()
                     .map(|t| format!("{}:{}", topic_field, t))
                     .collect::<Vec<_>>()
                     .join(" OR ");
@@ -484,22 +493,14 @@ fn block_number_to_u64(block: &BlockNumberOrTag) -> u64 {
     }
 }
 
-pub async fn start_rpc_server(
-    quickwit_client: QuickwitClient,
-    index_prefix: String,
-    port: u16,
-) {
+pub async fn start_rpc_server(quickwit_client: QuickwitClient, index_prefix: String, port: u16) {
     let state = RpcState::new(quickwit_client, index_prefix);
     let app = create_rpc_router(state);
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
     println!("RPC server listening on http://{}", addr);
 
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
 
-    axum::serve(listener, app)
-        .await
-        .unwrap();
+    axum::serve(listener, app).await.unwrap();
 }

@@ -6,9 +6,7 @@ use std::{
 
 use csv::{Writer, WriterBuilder};
 
-use crate::{
-    types::{ABIItem, IndexerContractMapping},
-};
+use crate::types::{ABIItem, IndexerContractMapping};
 
 // Temporary constant
 const ETH_TRANSFER_TABLE_NAME: &str = "eth_transfer";
@@ -109,7 +107,7 @@ fn csv_event_columns(abi_item: &ABIItem) -> Vec<String> {
         "indexed_id".to_string(), // the column in database created is "indexed_id", not "record_id"
         "contract_address".to_string(),
     ];
-    
+
     // Add raw log fields for eth_getLogs compatibility
     let columns_log_fields = vec![
         "log_index".to_string(),
@@ -120,7 +118,7 @@ fn csv_event_columns(abi_item: &ABIItem) -> Vec<String> {
         "topic3".to_string(), // Optional indexed parameter
         "data".to_string(),   // Non-indexed parameters encoded
     ];
-    
+
     let columns_suffix = vec![
         "tx_hash".to_string(),
         "block_number".to_string(),
@@ -152,10 +150,10 @@ pub struct CsvWriter {
     path_to_csv: PathBuf,
 
     columns: Vec<String>,
-    
+
     /// Total number of records written to this CSV
     total_records: usize,
-    
+
     /// Sync to database every N records
     sync_threshold: usize,
 }
@@ -173,7 +171,12 @@ impl CsvWriter {
     /// # Returns
     ///
     /// A new `CsvWriter` instance.
-    pub fn new(name: String, path_folder: &Path, columns: Vec<String>, sync_threshold: usize) -> Self {
+    pub fn new(
+        name: String,
+        path_folder: &Path,
+        columns: Vec<String>,
+        sync_threshold: usize,
+    ) -> Self {
         let path_to_csv = path_folder.join(&name).with_extension("csv");
 
         // remove csv file if it exists (ignore result)
@@ -202,23 +205,23 @@ impl CsvWriter {
         self.writer
             .write_record(&records)
             .expect("Failed to write records to CSV");
-        
+
         self.total_records += 1;
-        
+
         // Flush every time for data integrity
         self.writer.flush().expect("Failed to flush CSV writer");
     }
-    
+
     /// Force a flush of the CSV writer.
     pub fn flush(&mut self) {
         self.writer.flush().expect("Failed to flush CSV writer");
     }
-    
+
     /// Check if we should sync to database based on record count
     pub fn should_sync(&self) -> bool {
         self.total_records > 0 && self.total_records % self.sync_threshold == 0
     }
-    
+
     /// Get the total number of records written
     pub fn get_total_records(&self) -> usize {
         self.total_records
@@ -253,5 +256,4 @@ impl CsvWriter {
     pub fn path(&self) -> &str {
         self.path_to_csv.to_str().unwrap()
     }
-
 }

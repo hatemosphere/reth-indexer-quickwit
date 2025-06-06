@@ -59,16 +59,22 @@ async fn main() {
             let mut quickwit_conf_for_rpc = quickwit_conf.clone();
             quickwit_conf_for_rpc.recreate_indexes = false;
 
-            let quickwit_client = quickwit::init_quickwit_db(&quickwit_conf_for_rpc, &indexer_config.event_mappings)
-                .await
-                .expect("Failed to initialize Quickwit client for RPC");
+            let quickwit_client =
+                quickwit::init_quickwit_db(&quickwit_conf_for_rpc, &indexer_config.event_mappings)
+                    .await
+                    .expect("Failed to initialize Quickwit client for RPC");
 
             let rpc_port = std::env::var("RPC_PORT")
                 .unwrap_or("8545".to_string())
                 .parse::<u16>()
                 .unwrap_or(8545);
 
-            rpc::start_rpc_server(quickwit_client, quickwit_conf.index_prefix.clone(), rpc_port).await;
+            rpc::start_rpc_server(
+                quickwit_client,
+                quickwit_conf.index_prefix.clone(),
+                rpc_port,
+            )
+            .await;
         } else {
             eprintln!("RPC mode requires Quickwit configuration");
             std::process::exit(1);

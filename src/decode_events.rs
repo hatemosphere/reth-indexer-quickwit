@@ -1,18 +1,20 @@
+use alloy_primitives::{
+    hex::{self, ToHexExt},
+    keccak256, Address, B256 as H256,
+};
 use alloy_sol_types::{sol_data, SolType};
 use regex::RegexBuilder;
-use alloy_primitives::{hex::{self, ToHexExt}, keccak256, Address, B256 as H256};
 use reth_primitives::Log;
 
 use crate::types::{ABIInput, ABIItem};
 
 use once_cell::sync::Lazy;
-use std::sync::Mutex;
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 // Cache for event signatures to avoid recomputation
-static TOPIC_ID_CACHE: Lazy<Mutex<HashMap<String, H256>>> = Lazy::new(|| {
-    Mutex::new(HashMap::new())
-});
+static TOPIC_ID_CACHE: Lazy<Mutex<HashMap<String, H256>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Converts an ABI item to a topic ID by calculating the Keccak-256 hash
 /// of the item's name concatenated with its input types.
@@ -91,7 +93,9 @@ pub fn decode_logs(topic_id: H256, logs: &[Log], abi: &ABIItem) -> Vec<(DecodedL
     logs.iter()
         .filter_map(|log| {
             if log.topics().get(0) == Some(&topic_id) {
-                decode_log(log, abi).ok().map(|decoded| (decoded, log.clone()))
+                decode_log(log, abi)
+                    .ok()
+                    .map(|decoded| (decoded, log.clone()))
             } else {
                 None
             }
@@ -162,9 +166,8 @@ fn decode_topic_value(topic: &[u8], abi: &ABIInput) -> String {
 use std::sync::RwLock;
 
 // Cache compiled regexes to avoid recompilation
-static REGEX_CACHE: Lazy<RwLock<HashMap<String, regex::Regex>>> = Lazy::new(|| {
-    RwLock::new(HashMap::new())
-});
+static REGEX_CACHE: Lazy<RwLock<HashMap<String, regex::Regex>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
 
 /// Matches a value against a regular expression pattern, ignoring case.
 ///
@@ -277,7 +280,7 @@ fn decode_topic_log(topic: &[u8], abi_input: &ABIInput) -> Result<DecodedTopic, 
     // check regex and bail out if it doesn't match
     if let Some(regex) = &abi_input.regex {
         match regex_match(&abi_input.name, regex, &value) {
-            Ok(true) => {},
+            Ok(true) => {}
             Ok(false) | Err(_) => return Err(()),
         }
     }

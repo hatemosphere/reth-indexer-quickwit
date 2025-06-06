@@ -3,31 +3,24 @@ use std::{
     time::{Duration, Instant},
 };
 
+use alloy_consensus::{Transaction, TxReceipt};
+use alloy_primitives::{hex::ToHexExt, Address, Bloom, Sealable, B256 as H256};
+use alloy_rpc_types::{FilterSet, FilteredParams};
 use log::info;
-use alloy_primitives::{Address, Bloom, B256 as H256, Sealable, hex::ToHexExt};
 use reth_primitives::{Header, Log};
-use reth_provider::{
-    HeaderProvider, ReceiptProvider, TransactionsProvider, BlockBodyIndicesProvider,
-    BlockNumReader,
-};
-use alloy_rpc_types::{FilteredParams, FilterSet};
-use alloy_consensus::{TxReceipt, Transaction};
 use reth_primitives_traits::{SignedTransaction, SignerRecoverable};
+use reth_provider::{
+    BlockBodyIndicesProvider, BlockNumReader, HeaderProvider, ReceiptProvider, TransactionsProvider,
+};
 // use uuid::Uuid; // Removed - using uuid directly
 
 use crate::{
     csv::{create_csv_writers, CsvWriter}, // Re-enabled for testing
     datasource::DatasourceWritable,
     decode_events::{abi_item_to_topic_id, decode_logs, DecodedLog},
-    provider::{get_reth_factory_with_db, get_reth_db},
+    provider::{get_reth_db, get_reth_factory_with_db},
     types::{IndexerConfig, IndexerContractMapping},
 };
-use reth_node_ethereum::EthereumNode;
-use reth_node_types::NodeTypesWithDBAdapter;
-use reth_db::DatabaseEnv;
-use std::sync::Arc;
-use reth_provider::ProviderFactory;
-
 
 /// Writes a state record to a CSV file.
 ///
@@ -65,7 +58,12 @@ fn write_csv_state_record(
         let topics = raw_log.topics();
         // Use a loop to reduce code duplication
         for i in 0..4 {
-            records.push(topics.get(i).map(|t| format!("{:?}", t)).unwrap_or_default());
+            records.push(
+                topics
+                    .get(i)
+                    .map(|t| format!("{:?}", t))
+                    .unwrap_or_default(),
+            );
         }
 
         // Add raw data field - more efficient hex encoding
@@ -132,7 +130,10 @@ async fn sync_state_to_db(
     db_writers: &Vec<Box<dyn DatasourceWritable>>,
 ) {
     let record_count = csv_writer.get_total_records();
-    println!("Executing sync_state_to_db for table: {:?} with {} records", name, record_count);
+    println!(
+        "Executing sync_state_to_db for table: {:?} with {} records",
+        name, record_count
+    );
 
     // Ensure all data is flushed before syncing
     csv_writer.flush();
@@ -170,7 +171,10 @@ async fn sync_all_states_to_db(
             if let Some(csv_writer) = csv_writers.iter_mut().find(|w| w.name == abi_item.name) {
                 let record_count = csv_writer.get_total_records();
                 if record_count > 0 {
-                    println!("  Syncing {} with {} total records", abi_item.name, record_count);
+                    println!(
+                        "  Syncing {} with {} total records",
+                        abi_item.name, record_count
+                    );
                     sync_state_to_db(abi_item.name.to_lowercase(), csv_writer, db_writers).await;
                 } else {
                     println!("  Skipping {} (no records)", abi_item.name);
@@ -234,57 +238,59 @@ pub async fn sync(indexer_config: &IndexerConfig) {
     let mut block_number = indexer_config.from_block;
 
     // Open database environment once
-    let db = get_reth_db(&indexer_config.reth_db_location)
-        .expect("Failed to open database");
+    let db = get_reth_db(&indexer_config.reth_db_location).expect("Failed to open database");
 
-    let factory = get_reth_factory_with_db(&indexer_config.reth_db_location, db.clone())
+    let factory = get_reth_factory_with_db(&indexer_config.reth_db_location, db)
         .expect("Failed to initialize reth factory");
+
+    // Create a provider once and reuse it
+    let mut provider = factory
+        .provider()
+        .expect("Failed to initialize reth provider");
 
     // If toBlock is not specified, get the latest block number
     let to_block = if let Some(to) = indexer_config.to_block {
         to
     } else {
         // Get the latest block number from the database
-        match factory.provider() {
-            Ok(provider) => match provider.best_block_number() {
-                Ok(best) => {
-                    println!("No toBlock specified, indexing up to current block: {}", best);
+        match provider.best_block_number() {
+            Ok(best) => {
+                println!(
+                    "No toBlock specified, indexing up to current block: {}",
                     best
-                }
-                Err(e) => {
-                    eprintln!("Failed to get best block number: {:?}", e);
-                    eprintln!("Please specify toBlockNumber in config");
-                    return;
-                }
-            },
+                );
+                best
+            }
             Err(e) => {
-                eprintln!("Failed to get provider: {:?}", e);
+                eprintln!("Failed to get best block number: {:?}", e);
                 eprintln!("Please specify toBlockNumber in config");
                 return;
             }
         }
     };
 
-    println!("Starting indexer sync from block {} to {}", block_number, to_block);
+    println!(
+        "Starting indexer sync from block {} to {}",
+        block_number, to_block
+    );
 
     let start = Instant::now();
 
     // Process blocks from fromBlock to toBlock
     while block_number <= to_block {
-        // Get a fresh provider for this operation
-        let header_result = match factory.provider() {
-            Ok(provider) => provider.header_by_number(block_number),
-            Err(e) => {
-                println!("Failed to get provider: {:?}", e);
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                continue;
-            }
-        };
+        let header_result = provider.header_by_number(block_number);
 
         match header_result {
             Err(e) => {
                 // Database errors can occur during heavy syncing
                 println!("Error reading header for block {}: {:?}", block_number, e);
+
+                // If we get a database error, we might need a new provider
+                // Try to create a new provider to see fresh data
+                provider = factory
+                    .provider()
+                    .expect("Failed to create new provider after error");
+
                 tokio::time::sleep(Duration::from_millis(500)).await;
                 continue;
             }
@@ -294,35 +300,32 @@ pub async fn sync(indexer_config: &IndexerConfig) {
                     println!("Block {} not found, reached end of chain", block_number);
                     break;
                 }
-            Some(header_tx_info) => {
-                println!("Checking block: {}", block_number);
-                info!("checking block: {}", block_number);
+                Some(header_tx_info) => {
+                    println!("Checking block: {}", block_number);
+                    info!("checking block: {}", block_number);
 
-                // Debug: Print bloom filter status
-                if !header_tx_info.logs_bloom.is_zero() {
-                    println!("  Block {} has non-zero bloom filter", block_number);
-                }
-
-                for mapping in &indexer_config.event_mappings {
-                    let rpc_bloom: Bloom =
-                        Bloom::from_str(&format!("{:?}", header_tx_info.logs_bloom)).unwrap();
-
-                    if let Some(contract_addresses) = &mapping.filter_by_contract_addresses {
-                        if !contract_addresses.is_empty() {
-                            // check at least 1 matches bloom in mapping file
-                            if !contract_addresses
-                                .iter()
-                                .any(|address| contract_in_bloom(*address, rpc_bloom))
-                            {
-                                continue;
-                            }
-                        }
+                    // Debug: Print bloom filter status
+                    if !header_tx_info.logs_bloom.is_zero() {
+                        println!("  Block {} has non-zero bloom filter", block_number);
                     }
 
-                    let topic_match = mapping
-                        .decode_abi_items
-                        .iter()
-                        .any(|item| {
+                    for mapping in &indexer_config.event_mappings {
+                        let rpc_bloom: Bloom =
+                            Bloom::from_str(&format!("{:?}", header_tx_info.logs_bloom)).unwrap();
+
+                        if let Some(contract_addresses) = &mapping.filter_by_contract_addresses {
+                            if !contract_addresses.is_empty() {
+                                // check at least 1 matches bloom in mapping file
+                                if !contract_addresses
+                                    .iter()
+                                    .any(|address| contract_in_bloom(*address, rpc_bloom))
+                                {
+                                    continue;
+                                }
+                            }
+                        }
+
+                        let topic_match = mapping.decode_abi_items.iter().any(|item| {
                             let topic = abi_item_to_topic_id(item);
                             let in_bloom = topic_in_bloom(topic, rpc_bloom);
                             if !header_tx_info.logs_bloom.is_zero() {
@@ -331,44 +334,38 @@ pub async fn sync(indexer_config: &IndexerConfig) {
                             in_bloom
                         });
 
-                    if !topic_match {
-                        continue;
+                        if !topic_match {
+                            continue;
+                        }
+
+                        println!("  Processing block {} for mapping", block_number);
+                        process_block(
+                            &provider,
+                            &mut csv_writers,
+                            &db_writers,
+                            mapping,
+                            rpc_bloom,
+                            block_number,
+                            &header_tx_info,
+                            indexer_config.include_eth_transfers,
+                        )
+                        .await;
                     }
 
-                    println!("  Processing block {} for mapping", block_number);
-                    process_block(
-                        &factory,
-                        &mut csv_writers,
-                        &db_writers,
-                        mapping,
-                        rpc_bloom,
-                        block_number,
-                        &header_tx_info,
-                        indexer_config.include_eth_transfers,
-                    )
-                    .await;
+                    block_number += 1;
                 }
-
-                block_number += 1;
-            }}
+            },
         }
     }
 
     // Sync any remaining data in CSV buffers
-    sync_all_states_to_db(
-        indexer_config,
-        false,
-        &mut csv_writers,
-        &db_writers,
-    )
-    .await;
+    sync_all_states_to_db(indexer_config, false, &mut csv_writers, &db_writers).await;
 
     println!("Indexer sync is now complete");
 
     let duration = start.elapsed();
     println!("Elapsed time: {:.2?}", duration);
 }
-
 
 /// Processes a block by iterating over its transactions, filtering them based on contract addresses,
 /// and invoking the `process_transaction` function for each eligible transaction.
@@ -395,8 +392,8 @@ pub async fn sync(indexer_config: &IndexerConfig) {
 /// * `rpc_bloom` - The bloom filter associated with the block's RPC logs.
 /// * `block_number` - The block number being processed.
 /// * `header_tx_info` - A reference to the `Header` containing transaction-related information.
-async fn process_block(
-    factory: &ProviderFactory<NodeTypesWithDBAdapter<EthereumNode, Arc<DatabaseEnv>>>,
+async fn process_block<P>(
+    provider: &P,
     csv_writers: &mut [CsvWriter],
     db_writers: &Vec<Box<dyn DatasourceWritable>>,
     mapping: &IndexerContractMapping,
@@ -404,16 +401,9 @@ async fn process_block(
     block_number: u64,
     header_tx_info: &Header,
     include_eth_transfers: bool,
-) {
-    // Get a fresh provider for this block processing
-    let provider = match factory.provider() {
-        Ok(p) => p,
-        Err(e) => {
-            println!("  Failed to get provider for block {}: {:?}", block_number, e);
-            return;
-        }
-    };
-
+) where
+    P: BlockBodyIndicesProvider + TransactionsProvider + ReceiptProvider,
+{
     let block_body_indices = match provider.block_body_indices(block_number) {
         Ok(indices) => indices,
         Err(_) => {
@@ -424,7 +414,10 @@ async fn process_block(
     };
     if let Some(block_body_indices) = block_body_indices {
         if block_body_indices.tx_count > 0 {
-            println!("  Block {} has {} transactions", block_number, block_body_indices.tx_count);
+            println!(
+                "  Block {} has {} transactions",
+                block_number, block_body_indices.tx_count
+            );
         }
         let mut tx_index = 0u64;
         for tx_id in block_body_indices.first_tx_num
@@ -434,76 +427,91 @@ async fn process_block(
                 Ok(Some(transaction)) => {
                     match provider.receipt(tx_id) {
                         Ok(Some(receipt)) => {
-                    let logs: Vec<Log> =
-                        if let Some(contract_addresses) = &mapping.filter_by_contract_addresses {
-                            if contract_addresses.is_empty() {
-                                // Empty array means no filtering - include all logs
-                                receipt.logs().to_vec()
+                            let logs: Vec<Log> = if let Some(contract_addresses) =
+                                &mapping.filter_by_contract_addresses
+                            {
+                                if contract_addresses.is_empty() {
+                                    // Empty array means no filtering - include all logs
+                                    receipt.logs().to_vec()
+                                } else {
+                                    // Filter by the specified contract addresses
+                                    receipt
+                                        .logs()
+                                        .iter()
+                                        .filter(|log| {
+                                            contract_addresses
+                                                .iter()
+                                                .any(|address| address == &log.address)
+                                        })
+                                        .cloned()
+                                        .collect()
+                                }
                             } else {
-                                // Filter by the specified contract addresses
-                                receipt
-                                    .logs()
-                                    .iter()
-                                    .filter(|log| {
-                                        contract_addresses
-                                            .iter()
-                                            .any(|address| address == &log.address)
-                                    })
-                                    .cloned()
-                                    .collect()
+                                // None means no filtering - include all logs
+                                receipt.logs().to_vec()
+                            };
+
+                            if logs.is_empty() {
+                                tx_index += 1;
+                                continue;
                             }
-                        } else {
-                            // None means no filtering - include all logs
-                            receipt.logs().to_vec()
-                        };
 
-                    if logs.is_empty() {
-                        tx_index += 1;
-                        continue;
-                    }
+                            println!("    Found {} logs in tx {}", logs.len(), tx_id);
 
-                    println!("    Found {} logs in tx {}", logs.len(), tx_id);
+                            process_transaction(
+                                csv_writers,
+                                db_writers,
+                                mapping,
+                                rpc_bloom,
+                                &logs,
+                                transaction.clone(),
+                                header_tx_info,
+                                tx_index,
+                            )
+                            .await;
 
-                    process_transaction(
-                        csv_writers,
-                        db_writers,
-                        mapping,
-                        rpc_bloom,
-                        &logs,
-                        transaction.clone(),
-                        header_tx_info,
-                        tx_index,
-                    )
-                    .await;
-
-                    // Track ETH transfers if enabled
-                    // Note: ETH transfers are NOT logs and won't be returned by eth_getLogs
-                    // They're tracked separately for analytics/monitoring purposes
-                    if include_eth_transfers {
-                        let tx_value = transaction.value();
-                        if !tx_value.is_zero() {
-                            // Write ETH transfer record to separate table
-                            if let Some(eth_writer) = csv_writers.iter_mut().find(|w| w.name == "eth_transfer") {
-                                let mut records = Vec::new();
-                                records.push(format!("{:?}", transaction.recover_signer().unwrap_or_default()));
-                                records.push(format!("{:?}", transaction.to().unwrap_or_default()));
-                                records.push(tx_value.to_string());
-                                records.push(header_tx_info.number.to_string());
-                                records.push(format!("{:?}", header_tx_info.clone().seal_slow().hash()));
-                                records.push(header_tx_info.timestamp.to_string());
-                                eth_writer.write(records);
+                            // Track ETH transfers if enabled
+                            // Note: ETH transfers are NOT logs and won't be returned by eth_getLogs
+                            // They're tracked separately for analytics/monitoring purposes
+                            if include_eth_transfers {
+                                let tx_value = transaction.value();
+                                if !tx_value.is_zero() {
+                                    // Write ETH transfer record to separate table
+                                    if let Some(eth_writer) =
+                                        csv_writers.iter_mut().find(|w| w.name == "eth_transfer")
+                                    {
+                                        let mut records = Vec::new();
+                                        records.push(format!(
+                                            "{:?}",
+                                            transaction.recover_signer().unwrap_or_default()
+                                        ));
+                                        records.push(format!(
+                                            "{:?}",
+                                            transaction.to().unwrap_or_default()
+                                        ));
+                                        records.push(tx_value.to_string());
+                                        records.push(header_tx_info.number.to_string());
+                                        records.push(format!(
+                                            "{:?}",
+                                            header_tx_info.clone().seal_slow().hash()
+                                        ));
+                                        records.push(header_tx_info.timestamp.to_string());
+                                        eth_writer.write(records);
+                                    }
+                                }
                             }
-                        }
-                    }
 
-                    tx_index += 1;
+                            tx_index += 1;
                         }
                         Ok(None) => {
                             // No receipt for this transaction
                             tx_index += 1;
                         }
                         Err(e) => {
-                            println!("    Warning: Failed to get receipt for tx {}: {:?}", tx_id, e);
+                            println!(
+                                "    Warning: Failed to get receipt for tx {}: {:?}",
+                                tx_id, e
+                            );
                             tx_index += 1;
                         }
                     }
@@ -554,8 +562,7 @@ async fn process_transaction<T>(
     transaction: T,
     header_tx_info: &Header,
     tx_index: u64,
-)
-where
+) where
     T: SignedTransaction,
 {
     for abi_item in &mapping.decode_abi_items {
@@ -566,10 +573,18 @@ where
         }
 
         if let Some(csv_writer) = csv_writers.iter_mut().find(|w| w.name == abi_item.name) {
-            println!("    Processing {} logs for event {}", logs.len(), abi_item.name);
+            println!(
+                "    Processing {} logs for event {}",
+                logs.len(),
+                abi_item.name
+            );
             let decoded_logs = decode_logs(topic_id, logs, abi_item);
             if !decoded_logs.is_empty() {
-                println!("    Found {} decoded logs for {}", decoded_logs.len(), abi_item.name);
+                println!(
+                    "    Found {} decoded logs for {}",
+                    decoded_logs.len(),
+                    abi_item.name
+                );
                 write_csv_state_record(
                     csv_writer,
                     &decoded_logs,
@@ -581,11 +596,18 @@ where
 
                 // Check if we should sync based on record count
                 if csv_writer.should_sync() {
-                    println!("CSV sync threshold reached for {} (records: {})", abi_item.name, csv_writer.get_total_records());
+                    println!(
+                        "CSV sync threshold reached for {} (records: {})",
+                        abi_item.name,
+                        csv_writer.get_total_records()
+                    );
                     sync_state_to_db(abi_item.name.to_lowercase(), csv_writer, db_writers).await;
                 }
             } else {
-                println!("    No decoded logs for {} (topic: {:?})", abi_item.name, topic_id);
+                println!(
+                    "    No decoded logs for {} (topic: {:?})",
+                    abi_item.name, topic_id
+                );
             }
         } else {
             println!("    No CSV writer found for event {}", abi_item.name);

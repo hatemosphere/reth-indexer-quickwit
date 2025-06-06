@@ -15,20 +15,24 @@ use std::{any::Any, collections::HashMap, fs::File};
 pub trait DatasourceWritable {
     // Legacy CSV-based interface (for backwards compatibility)
     async fn write_data(&self, table_name: &str, csv_writer: &CsvWriter);
-    
+
     // New direct data interface (preferred for new implementations)
     #[allow(dead_code)]
-    async fn write_documents(&self, _table_name: &str, _documents: Vec<serde_json::Value>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn write_documents(
+        &self,
+        _table_name: &str,
+        _documents: Vec<serde_json::Value>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Default implementation returns error - implementations should override
         Err("write_documents not implemented for this datasource".into())
     }
-    
+
     // Check if this datasource prefers direct document writes
     #[allow(dead_code)]
     fn supports_direct_writes(&self) -> bool {
         false
     }
-    
+
     #[allow(dead_code)]
     fn as_any(&self) -> &dyn Any;
 }
