@@ -1,4 +1,4 @@
-use crate::{csv::CsvWriter, types::IndexerContractMapping};
+use crate::{csv::CsvWriter, types::IndexerContractMapping, error::IndexerError};
 use async_trait::async_trait;
 
 use csv::ReaderBuilder;
@@ -68,16 +68,20 @@ pub fn load_table_configs(
     for mapping in indexer_event_mappings {
         for abi_item in mapping.decode_abi_items.iter() {
             let table_name = abi_item.name.to_lowercase();
-            let column_type_map: IndexMap<String, String> = abi_item
-                .inputs
-                .iter()
-                .map(|input| {
-                    (
-                        input.name.clone(),
-                        solidity_type_to_db_type(input.type_.clone().as_str()).to_string(),
-                    )
-                })
-                .collect();
+            let mut column_type_map = IndexMap::new();
+            for input in &abi_item.inputs {
+                match solidity_type_to_db_type(&input.type_) {
+                    Ok(db_type) => {
+                        column_type_map.insert(input.name.clone(), db_type.to_string());
+                    }
+                    Err(e) => {
+                        // Log warning but continue processing
+                        log::warn!("Failed to map type for {}: {}", input.name, e);
+                        // Default to string type
+                        column_type_map.insert(input.name.clone(), "string".to_string());
+                    }
+                }
+            }
 
             let merged_column_types: IndexMap<String, String> = COMMON_COLUMNS
                 .into_iter()
@@ -99,13 +103,13 @@ pub fn load_table_configs(
 /// # Arguments
 ///
 /// * `abi_type` - the ABI type, specified as a string
-pub fn solidity_type_to_db_type(abi_type: &str) -> &str {
+pub fn solidity_type_to_db_type(abi_type: &str) -> Result<&str, IndexerError> {
     match abi_type {
-        "address" => "string",
-        "bool" | "bytes" | "string" | "int256" | "uint256" => "string",
+        "address" => Ok("string"),
+        "bool" | "bytes" | "string" | "int256" | "uint256" => Ok("string"),
         "uint8" | "uint16" | "uint32" | "uint64" | "uint128" | "int8" | "int16" | "int32"
-        | "int64" | "int128" => "int",
-        _ => panic!("Unsupported type {}", abi_type),
+        | "int64" | "int128" => Ok("int"),
+        _ => Err(IndexerError::Decode(format!("Unsupported type {}", abi_type))),
     }
 }
 
@@ -120,31 +124,38 @@ pub fn solidity_type_to_db_type(abi_type: &str) -> &str {
 ///
 /// * `table_name` - name of table for dataset
 /// * `path` - path to csv file
-pub fn read_csv_to_polars(path: &str, column_map: &IndexMap<String, String>) -> DataFrame {
+pub fn read_csv_to_polars(path: &str, column_map: &IndexMap<String, String>) -> Result<DataFrame, IndexerError> {
     //  Get list of columns in order, from csv file
-    let file = File::open(path).unwrap();
+    let file = File::open(path)
+        .map_err(|e| IndexerError::File(format!("Failed to open CSV file {}: {}", path, e)))?;
     let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(file);
-    let headers = rdr.headers().unwrap();
+    let headers = rdr.headers()
+        .map_err(|e| IndexerError::Csv(format!("Failed to read CSV headers: {}", e)))?;
     let column_names: Vec<String> = headers.iter().map(String::from).collect();
 
     //  Build column data types for polars dataframe, from column mapping
-    let plr_col_types = Some(Arc::new(
-        column_names
-            .iter()
-            .map(|name| match column_map[name].as_str() {
-                "int" => Field::new(name.clone().into(), DataType::Int64),
-                "string" => Field::new(name.clone().into(), DataType::String),
-                _ => panic!("incompatible type found"),
-            })
-            .collect(),
-    ));
+    let mut fields = Vec::new();
+    for name in &column_names {
+        let field = match column_map.get(name).map(|s| s.as_str()) {
+            Some("int") => Field::new(name.clone().into(), DataType::Int64),
+            Some("string") => Field::new(name.clone().into(), DataType::String),
+            _ => {
+                log::warn!("Unknown type for column {}, defaulting to string", name);
+                Field::new(name.clone().into(), DataType::String)
+            }
+        };
+        fields.push(field);
+    }
+    let plr_col_types = Some(Arc::new(fields));
 
     //  Read polars dataframe, w/ specified schema
-    CsvReadOptions::default()
+    let df = CsvReadOptions::default()
         .with_has_header(true)
         .with_schema(plr_col_types)
         .try_into_reader_with_file_path(Some(path.into()))
-        .unwrap()
+        .map_err(|e| IndexerError::Csv(format!("Failed to create CSV reader: {}", e)))?
         .finish()
-        .unwrap()
+        .map_err(|e| IndexerError::Csv(format!("Failed to read CSV into DataFrame: {}", e)))?;
+    
+    Ok(df)
 }

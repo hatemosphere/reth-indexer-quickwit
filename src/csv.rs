@@ -212,6 +212,17 @@ impl CsvWriter {
         self.writer.flush().expect("Failed to flush CSV writer");
     }
 
+    /// Get a mutable reference to the underlying CSV writer for direct field writing.
+    /// This is more efficient than building a Vec<String> when you have many fields.
+    pub fn get_writer(&mut self) -> &mut Writer<BufWriter<File>> {
+        &mut self.writer
+    }
+
+    /// Increment the record count after a direct write.
+    pub fn increment_record_count(&mut self) {
+        self.total_records += 1;
+    }
+
     /// Force a flush of the CSV writer.
     pub fn flush(&mut self) {
         self.writer.flush().expect("Failed to flush CSV writer");

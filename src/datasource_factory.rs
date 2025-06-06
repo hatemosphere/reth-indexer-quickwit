@@ -4,6 +4,7 @@ use crate::{
     types::{IndexerConfig, IndexerContractMapping},
 };
 use async_trait::async_trait;
+use log::warn;
 use std::collections::HashMap;
 
 /// Factory trait for creating datasource instances
@@ -53,8 +54,8 @@ impl DatasourceRegistry {
                 match factory.create(config, &config.event_mappings).await {
                     Ok(writer) => writers.push(writer),
                     Err(e) => {
-                        eprintln!(
-                            "Warning: Failed to initialize {} datasource: {}",
+                        warn!(
+                            "Failed to initialize {} datasource: {}",
                             factory.name(),
                             e
                         );

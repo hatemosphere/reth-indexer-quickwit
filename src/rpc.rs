@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types::{BlockNumberOrTag, Filter, FilterBlockOption, Log as RpcLog};
 use axum::{extract::State, http::StatusCode, response::Json, routing::post, Router};
+use log::info;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{str::FromStr, sync::Arc};
@@ -498,7 +499,7 @@ pub async fn start_rpc_server(quickwit_client: QuickwitClient, index_prefix: Str
     let app = create_rpc_router(state);
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-    println!("RPC server listening on http://{}", addr);
+    info!("RPC server listening on http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
 

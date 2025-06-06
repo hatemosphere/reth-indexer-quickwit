@@ -11,8 +11,10 @@ mod rpc;
 mod types;
 
 use crate::indexer::sync;
+use crate::error::IndexerError;
 use std::path::Path;
 use types::IndexerConfig;
+use log::{info, error};
 
 // We use jemalloc for performance reasons
 #[cfg(feature = "jemalloc")]
@@ -21,12 +23,12 @@ static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 /// Loads the indexer configuration from the specified file path.
 /// Returns the loaded `IndexerConfig` if successful.
-fn load_indexer_config(file_path: &Path) -> Result<IndexerConfig, Box<dyn std::error::Error>> {
+fn load_indexer_config(file_path: &Path) -> Result<IndexerConfig, IndexerError> {
     let content = std::fs::read_to_string(file_path)
-        .map_err(|e| format!("Failed to read config file at {:?}: {}", file_path, e))?;
+        .map_err(|e| IndexerError::Config(format!("Failed to read config file at {:?}: {}", file_path, e)))?;
 
     let config: IndexerConfig = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse config JSON: {}", e))?;
+        .map_err(|e| IndexerError::Config(format!("Failed to parse config JSON: {}", e)))?;
 
     Ok(config)
 }
@@ -40,12 +42,12 @@ async fn main() {
     let rpc_mode: bool = std::env::var("RPC").map(|_| true).unwrap_or(false);
     let config: String =
         std::env::var("CONFIG").unwrap_or("./reth-indexer-config.json".to_string());
-    println!("config: {}", config);
+    info!("config: {}", config);
 
     let indexer_config: IndexerConfig = match load_indexer_config(Path::new(&config)) {
         Ok(config) => config,
         Err(e) => {
-            eprintln!("Error loading configuration: {}", e);
+            error!("Error loading configuration: {}", e);
             std::process::exit(1);
         }
     };
@@ -53,7 +55,7 @@ async fn main() {
     if rpc_mode {
         // Start RPC server using existing Quickwit instance
         if let Some(quickwit_conf) = &indexer_config.quickwit {
-            println!("Starting RPC server...");
+            info!("Starting RPC server...");
 
             // Initialize Quickwit client (without recreating indexes)
             let mut quickwit_conf_for_rpc = quickwit_conf.clone();
@@ -76,7 +78,7 @@ async fn main() {
             )
             .await;
         } else {
-            eprintln!("RPC mode requires Quickwit configuration");
+            error!("RPC mode requires Quickwit configuration");
             std::process::exit(1);
         }
     } else {

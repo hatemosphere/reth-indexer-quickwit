@@ -13,7 +13,6 @@ reth-indexer is reading directly from Reth's database. It indexes blockchain eve
 - **Quickwit Integration**: Uses Quickwit as a high-performance search backend
 - **Bloom Filter Optimization**: Skips irrelevant blocks efficiently (~10,000 empty blocks in 400ms)
 - **Configuration-Driven**: Flexible event filtering and indexing through JSON configuration
-- **High Throughput**: Processes ~30,000 events/second
 
 ## Architecture
 

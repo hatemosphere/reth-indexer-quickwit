@@ -5,11 +5,12 @@ use crate::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use csv::ReaderBuilder;
+use csv::{ReaderBuilder, StringRecord};
 use indexmap::IndexMap;
 use reqwest::Client;
+use log::{info, warn, error, debug};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{json, Value, Map};
 use std::{any::Any, collections::HashMap, error::Error, fs, fs::File, path::Path};
 
 #[derive(Clone)]
@@ -144,7 +145,7 @@ impl QuickwitClient {
     /// Delete existing indexes if recreate_indexes is true
     pub async fn delete_indexes(&self) -> Result<(), Box<dyn Error>> {
         if self.recreate_indexes {
-            println!("WARNING: recreate_indexes is true, deleting existing indexes...");
+            info!("WARNING: recreate_indexes is true, deleting existing indexes...");
             for table_name in self.table_map.keys() {
                 let index_id = self.get_index_id(table_name);
                 let url = format!("{}/api/v1/indexes/{}", self.api_endpoint, index_id);
@@ -152,13 +153,13 @@ impl QuickwitClient {
                 match self.http_client.delete(&url).send().await {
                     Ok(response) => {
                         if response.status().is_success() || response.status() == 404 {
-                            println!("Deleted index: {}", index_id);
+                            info!("Deleted index: {}", index_id);
                         } else {
-                            println!("Failed to delete index {}: {}", index_id, response.status());
+                            info!("Failed to delete index {}: {}", index_id, response.status());
                         }
                     }
                     Err(e) => {
-                        println!("Error deleting index {}: {:?}", index_id, e);
+                        info!("Error deleting index {}: {:?}", index_id, e);
                     }
                 }
             }
@@ -181,10 +182,10 @@ impl QuickwitClient {
                 .await?;
 
             if response.status().is_success() {
-                println!("Created index: {}", index_id);
+                info!("Created index: {}", index_id);
             } else if response.status() == 400 {
                 // Index might already exist
-                println!("Index {} may already exist", index_id);
+                info!("Index {} may already exist", index_id);
             } else {
                 let error_text = response.text().await?;
                 return Err(format!("Failed to create index {}: {}", index_id, error_text).into());
@@ -270,25 +271,25 @@ impl QuickwitClient {
         match self.csv_to_documents(csv_writer.path(), column_map) {
             Ok(documents) => {
                 if documents.is_empty() {
-                    println!("No documents to ingest for {}", table_name);
+                    info!("No documents to ingest for {}", table_name);
                     return;
                 }
 
                 // Ingest documents in batches
                 for chunk in documents.chunks(self.batch_size) {
                     if let Err(e) = self.ingest_documents_native(&index_id, chunk).await {
-                        println!("Failed to ingest batch for {}: {:?}", table_name, e);
+                        info!("Failed to ingest batch for {}: {:?}", table_name, e);
                     }
                 }
 
-                println!(
+                info!(
                     "Successfully ingested {} documents to {}",
                     documents.len(),
                     index_id
                 );
             }
             Err(e) => {
-                println!("Failed to convert CSV to documents: {:?}", e);
+                info!("Failed to convert CSV to documents: {:?}", e);
             }
         }
     }
@@ -305,47 +306,62 @@ impl QuickwitClient {
 
         let mut documents = Vec::new();
 
+        // Pre-process header information for efficiency
+        let header_info: Vec<(&str, &str)> = headers
+            .iter()
+            .map(|h| {
+                let field_type = column_map
+                    .get(h)
+                    .map(|s| s.as_str())
+                    .unwrap_or("string");
+                (h, field_type)
+            })
+            .collect();
+
         for result in rdr.records() {
             let record = result?;
-            let mut doc = json!({});
+            let mut doc = Map::with_capacity(headers.len());
 
             for (i, value) in record.iter().enumerate() {
-                if let Some(header) = headers.get(i) {
+                if let Some(&(header, field_type)) = header_info.get(i) {
                     // Skip empty topic fields to save storage and improve performance
                     if header.starts_with("topic") && value.is_empty() {
                         continue;
                     }
 
-                    let field_type = column_map
-                        .get(header)
-                        .map(|s| s.as_str())
-                        .unwrap_or("string");
-
                     // Convert value based on field type
                     let json_value = match (header, field_type) {
-                        ("log_index", _) | ("transaction_index", _) => value
-                            .parse::<i64>()
-                            .map(|v| json!(v))
-                            .unwrap_or_else(|_| json!(0)),
-                        (_, "int") => value
-                            .parse::<i64>()
-                            .map(|v| json!(v))
-                            .unwrap_or_else(|_| json!(value)),
-                        _ => json!(value),
+                        ("log_index", _) | ("transaction_index", _) => {
+                            if let Ok(v) = value.parse::<i64>() {
+                                Value::Number(v.into())
+                            } else {
+                                Value::Number(0.into())
+                            }
+                        }
+                        (_, "int") => {
+                            if let Ok(v) = value.parse::<i64>() {
+                                Value::Number(v.into())
+                            } else {
+                                Value::String(value.to_string())
+                            }
+                        }
+                        _ => Value::String(value.to_string()),
                     };
 
-                    doc[header] = json_value;
+                    doc.insert(header.to_string(), json_value);
                 }
             }
 
             // Convert timestamp to RFC3339 format for Quickwit
-            if let Some(timestamp) = doc.get("timestamp").and_then(|v| v.as_i64()) {
-                let dt =
-                    DateTime::<Utc>::from_timestamp(timestamp, 0).unwrap_or_else(|| Utc::now());
-                doc["timestamp"] = json!(dt.to_rfc3339());
+            if let Some(Value::Number(n)) = doc.get("timestamp") {
+                if let Some(timestamp) = n.as_i64() {
+                    let dt = DateTime::<Utc>::from_timestamp(timestamp, 0)
+                        .unwrap_or_else(|| Utc::now());
+                    doc.insert("timestamp".to_string(), Value::String(dt.to_rfc3339()));
+                }
             }
 
-            documents.push(doc);
+            documents.push(Value::Object(doc));
         }
 
         Ok(documents)
@@ -381,7 +397,7 @@ impl QuickwitClient {
         }
 
         let elapsed = start.elapsed();
-        println!("    Ingested {} docs in {:?}", documents.len(), elapsed);
+        info!("    Ingested {} docs in {:?}", documents.len(), elapsed);
 
         Ok(())
     }
@@ -444,7 +460,7 @@ impl QuickwitClient {
                 }
                 Err(e) => {
                     // Log error but continue searching other indexes
-                    eprintln!("Error searching index {}: {:?}", table_name, e);
+                    error!("Error searching index {}: {:?}", table_name, e);
                 }
             }
         }
@@ -468,18 +484,13 @@ impl QuickwitClient {
         })
     }
 
-    /// Get all event table names
-    #[allow(dead_code)]
-    pub fn get_event_types(&self) -> Vec<String> {
-        self.table_map.keys().cloned().collect()
-    }
 }
 
 /// Implement DatasourceWritable trait
 #[async_trait]
 impl DatasourceWritable for QuickwitClient {
     async fn write_data(&self, table_name: &str, csv_writer: &CsvWriter) {
-        println!("  writing / sync to quickwit index: {:?}", table_name);
+        info!("  writing / sync to quickwit index: {:?}", table_name);
         self.write_csv_to_quickwit(table_name, csv_writer).await;
     }
 

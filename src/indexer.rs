@@ -6,7 +6,7 @@ use std::{
 use alloy_consensus::{Transaction, TxReceipt};
 use alloy_primitives::{hex::ToHexExt, Address, Bloom, Sealable, B256 as H256};
 use alloy_rpc_types::{FilterSet, FilteredParams};
-use log::info;
+use log::{info, error, debug, warn};
 use reth_primitives::{Header, Log};
 use reth_primitives_traits::{SignedTransaction, SignerRecoverable};
 use reth_provider::{
@@ -43,46 +43,57 @@ fn write_csv_state_record(
     block_hash: H256,
     tx_index: u64,
 ) {
+    use csv::ByteRecord;
+    
+    let writer = csv_writer.get_writer();
+    
     for (log_index, (decoded_log, raw_log)) in decoded_logs.iter().enumerate() {
-        // Pre-allocate with estimated capacity to avoid reallocations
-        let mut records = Vec::with_capacity(12 + decoded_log.topics.len());
-
-        records.push(uuid::Uuid::new_v4().to_string());
-        records.push(format!("{:?}", decoded_log.address));
-
+        let mut record = ByteRecord::new();
+        
+        // Write fields directly to avoid intermediate allocations
+        record.push_field(uuid::Uuid::new_v4().to_string().as_bytes());
+        record.push_field(format!("{:?}", decoded_log.address).as_bytes());
+        
         // Add raw log fields for eth_getLogs compatibility
-        records.push(log_index.to_string());
-        records.push(tx_index.to_string());
-
+        record.push_field(log_index.to_string().as_bytes());
+        record.push_field(tx_index.to_string().as_bytes());
+        
         // Add topics (topic0 is always present, others may be empty)
         let topics = raw_log.topics();
-        // Use a loop to reduce code duplication
         for i in 0..4 {
-            records.push(
-                topics
-                    .get(i)
-                    .map(|t| format!("{:?}", t))
-                    .unwrap_or_default(),
-            );
+            if let Some(topic) = topics.get(i) {
+                record.push_field(format!("{:?}", topic).as_bytes());
+            } else {
+                record.push_field(b"");
+            }
         }
-
+        
         // Add raw data field - more efficient hex encoding
-        let mut data_hex = String::with_capacity(2 + raw_log.data.data.len() * 2);
-        data_hex.push_str("0x");
-        data_hex.push_str(&raw_log.data.data.encode_hex());
-        records.push(data_hex);
-
-        // Add decoded values - avoid intermediate vector
-        records.extend(decoded_log.topics.iter().map(|input| input.value.clone()));
-
-        // write common information every table has
-        records.push(format!("{:?}", tx_hash));
-        records.push(header_tx_info.number.to_string());
-        records.push(format!("{:?}", block_hash));
-        records.push(header_tx_info.timestamp.to_string());
-
-        csv_writer.write(records);
+        if raw_log.data.data.is_empty() {
+            record.push_field(b"0x");
+        } else {
+            let hex_data = format!("0x{}", raw_log.data.data.encode_hex());
+            record.push_field(hex_data.as_bytes());
+        }
+        
+        // Add decoded values
+        for input in &decoded_log.topics {
+            record.push_field(input.value.as_bytes());
+        }
+        
+        // Write common information every table has
+        record.push_field(format!("{:?}", tx_hash).as_bytes());
+        record.push_field(header_tx_info.number.to_string().as_bytes());
+        record.push_field(format!("{:?}", block_hash).as_bytes());
+        record.push_field(header_tx_info.timestamp.to_string().as_bytes());
+        
+        writer.write_byte_record(&record)
+            .expect("Failed to write record to CSV");
+        csv_writer.increment_record_count();
     }
+    
+    // Flush after writing all records for this batch
+    writer.flush().expect("Failed to flush CSV writer");
 }
 
 /// Checks if a contract address is present in the logs bloom filter.
@@ -130,7 +141,7 @@ async fn sync_state_to_db(
     db_writers: &Vec<Box<dyn DatasourceWritable>>,
 ) {
     let record_count = csv_writer.get_total_records();
-    println!(
+    info!(
         "Executing sync_state_to_db for table: {:?} with {} records",
         name, record_count
     );
@@ -165,19 +176,19 @@ async fn sync_all_states_to_db(
     csv_writers: &mut [CsvWriter],
     db_writers: &Vec<Box<dyn DatasourceWritable>>,
 ) {
-    println!("Syncing all remaining CSV data to database...");
+    info!("Syncing all remaining CSV data to database...");
     for mapping in &indexer_config.event_mappings {
         for abi_item in &mapping.decode_abi_items {
             if let Some(csv_writer) = csv_writers.iter_mut().find(|w| w.name == abi_item.name) {
                 let record_count = csv_writer.get_total_records();
                 if record_count > 0 {
-                    println!(
+                    info!(
                         "  Syncing {} with {} total records",
                         abi_item.name, record_count
                     );
                     sync_state_to_db(abi_item.name.to_lowercase(), csv_writer, db_writers).await;
                 } else {
-                    println!("  Skipping {} (no records)", abi_item.name);
+                    info!("  Skipping {} (no records)", abi_item.name);
                 }
             }
         }
@@ -224,8 +235,8 @@ pub async fn init_datasource_writers(
 /// * `indexer_config` - The `IndexerConfig` containing the configuration details for the indexer.
 pub async fn sync(indexer_config: &IndexerConfig) {
     // info!("Starting indexer");
-    println!("Starting indexer");
-    println!("Initializing database writers");
+    info!("Starting indexer");
+    info!("Initializing database writers");
     let db_writers = init_datasource_writers(indexer_config).await;
 
     let mut csv_writers = create_csv_writers(
@@ -255,21 +266,21 @@ pub async fn sync(indexer_config: &IndexerConfig) {
         // Get the latest block number from the database
         match provider.best_block_number() {
             Ok(best) => {
-                println!(
+                info!(
                     "No toBlock specified, indexing up to current block: {}",
                     best
                 );
                 best
             }
             Err(e) => {
-                eprintln!("Failed to get best block number: {:?}", e);
-                eprintln!("Please specify toBlockNumber in config");
+                error!("Failed to get best block number: {:?}", e);
+                error!("Please specify toBlockNumber in config");
                 return;
             }
         }
     };
 
-    println!(
+    info!(
         "Starting indexer sync from block {} to {}",
         block_number, to_block
     );
@@ -283,7 +294,7 @@ pub async fn sync(indexer_config: &IndexerConfig) {
         match header_result {
             Err(e) => {
                 // Database errors can occur during heavy syncing
-                println!("Error reading header for block {}: {:?}", block_number, e);
+                info!("Error reading header for block {}: {:?}", block_number, e);
 
                 // If we get a database error, we might need a new provider
                 // Try to create a new provider to see fresh data
@@ -297,16 +308,15 @@ pub async fn sync(indexer_config: &IndexerConfig) {
             Ok(header_opt) => match header_opt {
                 None => {
                     // Block doesn't exist yet, we've reached the end
-                    println!("Block {} not found, reached end of chain", block_number);
+                    info!("Block {} not found, reached end of chain", block_number);
                     break;
                 }
                 Some(header_tx_info) => {
-                    println!("Checking block: {}", block_number);
-                    info!("checking block: {}", block_number);
+                    debug!("Checking block: {}", block_number);
 
                     // Debug: Print bloom filter status
                     if !header_tx_info.logs_bloom.is_zero() {
-                        println!("  Block {} has non-zero bloom filter", block_number);
+                        info!("  Block {} has non-zero bloom filter", block_number);
                     }
 
                     for mapping in &indexer_config.event_mappings {
@@ -329,7 +339,7 @@ pub async fn sync(indexer_config: &IndexerConfig) {
                             let topic = abi_item_to_topic_id(item);
                             let in_bloom = topic_in_bloom(topic, rpc_bloom);
                             if !header_tx_info.logs_bloom.is_zero() {
-                                println!("    Checking topic {} in bloom: {}", topic, in_bloom);
+                                info!("    Checking topic {} in bloom: {}", topic, in_bloom);
                             }
                             in_bloom
                         });
@@ -338,7 +348,7 @@ pub async fn sync(indexer_config: &IndexerConfig) {
                             continue;
                         }
 
-                        println!("  Processing block {} for mapping", block_number);
+                        info!("  Processing block {} for mapping", block_number);
                         process_block(
                             &provider,
                             &mut csv_writers,
@@ -361,10 +371,10 @@ pub async fn sync(indexer_config: &IndexerConfig) {
     // Sync any remaining data in CSV buffers
     sync_all_states_to_db(indexer_config, false, &mut csv_writers, &db_writers).await;
 
-    println!("Indexer sync is now complete");
+    info!("Indexer sync is now complete");
 
     let duration = start.elapsed();
-    println!("Elapsed time: {:.2?}", duration);
+    info!("Elapsed time: {:.2?}", duration);
 }
 
 /// Processes a block by iterating over its transactions, filtering them based on contract addresses,
@@ -404,6 +414,8 @@ async fn process_block<P>(
 ) where
     P: BlockBodyIndicesProvider + TransactionsProvider + ReceiptProvider,
 {
+    // Compute block hash once
+    let block_hash = header_tx_info.clone().seal_slow().hash();
     let block_body_indices = match provider.block_body_indices(block_number) {
         Ok(indices) => indices,
         Err(_) => {
@@ -414,7 +426,7 @@ async fn process_block<P>(
     };
     if let Some(block_body_indices) = block_body_indices {
         if block_body_indices.tx_count > 0 {
-            println!(
+            info!(
                 "  Block {} has {} transactions",
                 block_number, block_body_indices.tx_count
             );
@@ -456,7 +468,7 @@ async fn process_block<P>(
                                 continue;
                             }
 
-                            println!("    Found {} logs in tx {}", logs.len(), tx_id);
+                            info!("    Found {} logs in tx {}", logs.len(), tx_id);
 
                             process_transaction(
                                 csv_writers,
@@ -464,8 +476,9 @@ async fn process_block<P>(
                                 mapping,
                                 rpc_bloom,
                                 &logs,
-                                transaction.clone(),
+                                &transaction,
                                 header_tx_info,
+                                block_hash,
                                 tx_index,
                             )
                             .await;
@@ -493,7 +506,7 @@ async fn process_block<P>(
                                         records.push(header_tx_info.number.to_string());
                                         records.push(format!(
                                             "{:?}",
-                                            header_tx_info.clone().seal_slow().hash()
+                                            block_hash
                                         ));
                                         records.push(header_tx_info.timestamp.to_string());
                                         eth_writer.write(records);
@@ -508,7 +521,7 @@ async fn process_block<P>(
                             tx_index += 1;
                         }
                         Err(e) => {
-                            println!(
+                            info!(
                                 "    Warning: Failed to get receipt for tx {}: {:?}",
                                 tx_id, e
                             );
@@ -521,7 +534,7 @@ async fn process_block<P>(
                     tx_index += 1;
                 }
                 Err(e) => {
-                    println!("    Warning: Failed to get transaction {}: {:?}", tx_id, e);
+                    info!("    Warning: Failed to get transaction {}: {:?}", tx_id, e);
                     tx_index += 1;
                 }
             }
@@ -559,8 +572,9 @@ async fn process_transaction<T>(
     mapping: &IndexerContractMapping,
     rpc_bloom: Bloom,
     logs: &[Log],
-    transaction: T,
+    transaction: &T,
     header_tx_info: &Header,
+    block_hash: H256,
     tx_index: u64,
 ) where
     T: SignedTransaction,
@@ -573,14 +587,14 @@ async fn process_transaction<T>(
         }
 
         if let Some(csv_writer) = csv_writers.iter_mut().find(|w| w.name == abi_item.name) {
-            println!(
+            info!(
                 "    Processing {} logs for event {}",
                 logs.len(),
                 abi_item.name
             );
             let decoded_logs = decode_logs(topic_id, logs, abi_item);
             if !decoded_logs.is_empty() {
-                println!(
+                info!(
                     "    Found {} decoded logs for {}",
                     decoded_logs.len(),
                     abi_item.name
@@ -590,13 +604,13 @@ async fn process_transaction<T>(
                     &decoded_logs,
                     header_tx_info,
                     *transaction.tx_hash(),
-                    header_tx_info.clone().seal_slow().hash(),
+                    block_hash,
                     tx_index,
                 );
 
                 // Check if we should sync based on record count
                 if csv_writer.should_sync() {
-                    println!(
+                    info!(
                         "CSV sync threshold reached for {} (records: {})",
                         abi_item.name,
                         csv_writer.get_total_records()
@@ -604,13 +618,13 @@ async fn process_transaction<T>(
                     sync_state_to_db(abi_item.name.to_lowercase(), csv_writer, db_writers).await;
                 }
             } else {
-                println!(
+                info!(
                     "    No decoded logs for {} (topic: {:?})",
                     abi_item.name, topic_id
                 );
             }
         } else {
-            println!("    No CSV writer found for event {}", abi_item.name);
+            info!("    No CSV writer found for event {}", abi_item.name);
         }
     }
 }
