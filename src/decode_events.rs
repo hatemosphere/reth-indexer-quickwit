@@ -5,6 +5,7 @@ use alloy_primitives::{
 use alloy_sol_types::{sol_data, SolType};
 use regex::RegexBuilder;
 use reth_primitives::Log;
+use tracing::{trace, warn};
 
 use crate::types::{ABIInput, ABIItem};
 
@@ -39,12 +40,14 @@ pub fn abi_item_to_topic_id(item: &ABIItem) -> H256 {
     {
         let cache = TOPIC_ID_CACHE.lock().unwrap();
         if let Some(&topic_id) = cache.get(&signature) {
+            trace!("Topic ID cache hit for signature: {}", signature);
             return topic_id;
         }
     }
 
     // Compute and cache
     let topic_id = keccak256(&signature);
+    trace!("Computed topic ID for {}: {:?}", signature, topic_id);
     {
         let mut cache = TOPIC_ID_CACHE.lock().unwrap();
         cache.insert(signature, topic_id);
@@ -90,17 +93,39 @@ pub struct DecodedLog {
 /// let decoded_logs = decode_logs(topic_id, &logs, &abi);
 /// ```
 pub fn decode_logs(topic_id: H256, logs: &[Log], abi: &ABIItem) -> Vec<(DecodedLog, Log)> {
-    logs.iter()
+    let mut decoded_count = 0;
+    let total_logs = logs.len();
+
+    let result = logs
+        .iter()
         .filter_map(|log| {
             if log.topics().get(0) == Some(&topic_id) {
-                decode_log(log, abi)
-                    .ok()
-                    .map(|decoded| (decoded, log.clone()))
+                match decode_log(log, abi) {
+                    Ok(decoded) => {
+                        decoded_count += 1;
+                        Some((decoded, log.clone()))
+                    }
+                    Err(_) => {
+                        trace!("Failed to decode log for event {}", abi.name);
+                        None
+                    }
+                }
             } else {
                 None
             }
         })
-        .collect()
+        .collect();
+
+    if total_logs > 0 {
+        trace!(
+            "Decoded {}/{} logs for event {}",
+            decoded_count,
+            total_logs,
+            abi.name
+        );
+    }
+
+    result
 }
 
 /// Decodes the value of a topic using the provided ABI input definition.
@@ -156,10 +181,14 @@ fn decode_topic_value(topic: &[u8], abi: &ABIInput) -> String {
             if topic.len() == 32 {
                 format!("0x{}", hex::encode(topic))
             } else {
-                panic!("Invalid bytes32 length: {}", topic.len())
+                warn!("Invalid bytes32 length: {} bytes", topic.len());
+                format!("0x{}", hex::encode(topic))
             }
         }
-        _ => panic!("Unknown type: {}", abi.type_),
+        _ => {
+            warn!("Unknown ABI type: {}", abi.type_);
+            format!("0x{}", hex::encode(topic))
+        }
     }
 }
 
@@ -186,6 +215,7 @@ fn regex_match(abi_name: &str, regex: &str, value: &str) -> Result<bool, String>
     {
         let cache = REGEX_CACHE.read().unwrap();
         if let Some(compiled_regex) = cache.get(regex) {
+            trace!("Regex cache hit for pattern: {}", regex);
             return Ok(compiled_regex.is_match(value));
         }
     }
@@ -194,7 +224,10 @@ fn regex_match(abi_name: &str, regex: &str, value: &str) -> Result<bool, String>
     let compiled_regex = RegexBuilder::new(regex)
         .case_insensitive(true)
         .build()
-        .map_err(|e| format!("Invalid regex for {}: {}", abi_name, e))?;
+        .map_err(|e| {
+            warn!("Invalid regex for {}: {}", abi_name, e);
+            format!("Invalid regex for {}: {}", abi_name, e)
+        })?;
 
     let is_match = compiled_regex.is_match(value);
 
@@ -280,8 +313,24 @@ fn decode_topic_log(topic: &[u8], abi_input: &ABIInput) -> Result<DecodedTopic, 
     // check regex and bail out if it doesn't match
     if let Some(regex) = &abi_input.regex {
         match regex_match(&abi_input.name, regex, &value) {
-            Ok(true) => {}
-            Ok(false) | Err(_) => return Err(()),
+            Ok(true) => {
+                trace!(
+                    "Regex match successful for {}: {} matches {}",
+                    abi_input.name,
+                    value,
+                    regex
+                );
+            }
+            Ok(false) => {
+                trace!(
+                    "Regex match failed for {}: {} doesn't match {}",
+                    abi_input.name,
+                    value,
+                    regex
+                );
+                return Err(());
+            }
+            Err(_) => return Err(()),
         }
     }
 
@@ -317,6 +366,11 @@ fn decode_log_topics(log: &Log, abi: &ABIItem) -> Result<Vec<DecodedTopic>, ()> 
 
     if indexed_inputs.len() != log.topics().len() - 1 {
         // -1 because the first topic is the event signature
+        trace!(
+            "Topic count mismatch: expected {} indexed inputs, got {} topics",
+            indexed_inputs.len(),
+            log.topics().len() - 1
+        );
         return Err(());
     }
 
@@ -358,6 +412,11 @@ fn decode_log_data(log: &Log, abi: &ABIItem) -> Result<Vec<DecodedTopic>, ()> {
     let topics = log.data.data.chunks_exact(32);
 
     if non_indexed_inputs.len() != topics.len() {
+        trace!(
+            "Data length mismatch: expected {} non-indexed inputs, got {} data chunks",
+            non_indexed_inputs.len(),
+            topics.len()
+        );
         return Err(());
     }
 

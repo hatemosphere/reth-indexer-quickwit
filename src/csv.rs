@@ -5,6 +5,7 @@ use std::{
 };
 
 use csv::{Writer, WriterBuilder};
+use tracing::{debug, error, trace};
 
 use crate::types::{ABIItem, IndexerContractMapping};
 
@@ -29,10 +30,16 @@ pub fn create_csv_writers(
     include_eth_transfers: bool,
     sync_threshold: usize,
 ) -> Vec<CsvWriter> {
+    debug!(
+        "Creating CSV writers at path: {:?}, sync_threshold: {}",
+        write_path, sync_threshold
+    );
+
     let mut writers: Vec<CsvWriter> = indexer_contract_mappings
         .iter()
         .flat_map(|mapping| {
             mapping.decode_abi_items.iter().map(|abi_item| {
+                debug!("Creating CSV writer for event: {}", abi_item.name);
                 CsvWriter::new(
                     abi_item.name.clone(),
                     write_path,
@@ -44,6 +51,7 @@ pub fn create_csv_writers(
         .collect();
 
     if include_eth_transfers {
+        debug!("Creating CSV writer for ETH transfers");
         writers.push(CsvWriter::new(
             ETH_TRANSFER_TABLE_NAME.to_string(),
             write_path,
@@ -59,6 +67,7 @@ pub fn create_csv_writers(
         ));
     }
 
+    debug!("Created {} CSV writers", writers.len());
     writers
 }
 
@@ -73,16 +82,30 @@ pub fn create_csv_writers(
 ///
 /// Returns a `csv::Writer` instance.
 fn create_writer(path_to_csv: &Path, columns: &Vec<String>) -> Writer<BufWriter<File>> {
-    let file = File::create(path_to_csv).expect("Failed to create CSV file");
-    let file = BufWriter::new(file);
+    trace!("Creating CSV file at: {:?}", path_to_csv);
 
+    let file = match File::create(path_to_csv) {
+        Ok(f) => f,
+        Err(e) => {
+            error!("Failed to create CSV file at {:?}: {}", path_to_csv, e);
+            panic!("Failed to create CSV file: {}", e);
+        }
+    };
+
+    let file = BufWriter::new(file);
     let mut writer = WriterBuilder::new().from_writer(file);
 
-    writer
-        .write_record(columns)
-        .expect("Failed to write CSV header record");
-    writer.flush().expect("Failed to flush CSV writer");
+    if let Err(e) = writer.write_record(columns) {
+        error!("Failed to write CSV header: {}", e);
+        panic!("Failed to write CSV header record: {}", e);
+    }
 
+    if let Err(e) = writer.flush() {
+        error!("Failed to flush CSV writer: {}", e);
+        panic!("Failed to flush CSV writer: {}", e);
+    }
+
+    trace!("CSV file created with {} columns", columns.len());
     writer
 }
 
@@ -179,8 +202,13 @@ impl CsvWriter {
     ) -> Self {
         let path_to_csv = path_folder.join(&name).with_extension("csv");
 
-        // remove csv file if it exists (ignore result)
-        let _ = fs::remove_file(&path_to_csv);
+        // remove csv file if it exists
+        if path_to_csv.exists() {
+            debug!("Removing existing CSV file: {:?}", path_to_csv);
+            if let Err(e) = fs::remove_file(&path_to_csv) {
+                error!("Failed to remove existing CSV file: {}", e);
+            }
+        }
 
         CsvWriter {
             name,
@@ -202,14 +230,24 @@ impl CsvWriter {
     ///
     /// This function will panic if there is an error writing to the CSV file or flushing the writer.
     pub fn write(&mut self, records: Vec<String>) {
-        self.writer
-            .write_record(&records)
-            .expect("Failed to write records to CSV");
+        trace!("Writing record to CSV: {}", self.name);
+
+        if let Err(e) = self.writer.write_record(&records) {
+            error!("Failed to write record to CSV {}: {}", self.name, e);
+            panic!("Failed to write records to CSV: {}", e);
+        }
 
         self.total_records += 1;
 
         // Flush every time for data integrity
-        self.writer.flush().expect("Failed to flush CSV writer");
+        if let Err(e) = self.writer.flush() {
+            error!("Failed to flush CSV writer {}: {}", self.name, e);
+            panic!("Failed to flush CSV writer: {}", e);
+        }
+
+        if self.total_records % 10000 == 0 {
+            debug!("CSV {}: {} records written", self.name, self.total_records);
+        }
     }
 
     /// Get a mutable reference to the underlying CSV writer for direct field writing.
@@ -225,7 +263,11 @@ impl CsvWriter {
 
     /// Force a flush of the CSV writer.
     pub fn flush(&mut self) {
-        self.writer.flush().expect("Failed to flush CSV writer");
+        trace!("Flushing CSV writer: {}", self.name);
+        if let Err(e) = self.writer.flush() {
+            error!("Failed to flush CSV writer {}: {}", self.name, e);
+            panic!("Failed to flush CSV writer: {}", e);
+        }
     }
 
     /// Check if we should sync to database based on record count
@@ -244,7 +286,11 @@ impl CsvWriter {
     ///
     /// This function will panic if there is an error deleting the CSV file.
     pub fn delete(&mut self) {
-        fs::remove_file(&self.path_to_csv).unwrap();
+        debug!("Deleting CSV file: {:?}", self.path_to_csv);
+        if let Err(e) = fs::remove_file(&self.path_to_csv) {
+            error!("Failed to delete CSV file {:?}: {}", self.path_to_csv, e);
+            panic!("Failed to delete CSV file: {}", e);
+        }
     }
 
     /// Resets the CsvWriter by deleting the existing CSV file and creating a new one.
@@ -254,9 +300,11 @@ impl CsvWriter {
     /// This function will panic if there is an error deleting the existing CSV file or
     /// creating a new one.
     pub fn reset(&mut self) {
+        debug!("Resetting CSV writer: {}", self.name);
         self.delete();
         self.writer = create_writer(&self.path_to_csv, &self.columns);
         self.total_records = 0;
+        debug!("CSV writer {} reset complete", self.name);
     }
 
     /// Returns the path to the CSV file.

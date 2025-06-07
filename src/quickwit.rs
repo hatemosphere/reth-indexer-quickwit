@@ -11,7 +11,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::{any::Any, collections::HashMap, error::Error, fs, fs::File, path::Path};
-use tracing::{error, info};
+use tracing::{debug, error, trace, warn};
 
 #[derive(Clone)]
 pub struct QuickwitClient {
@@ -75,6 +75,7 @@ pub async fn init_quickwit_db(
     let quickwit_client = QuickwitClient::new(indexer_quickwit_config, event_mappings).await?;
 
     if indexer_quickwit_config.recreate_indexes {
+        warn!("WARNING: recreate_indexes is true, deleting existing indexes...");
         if let Err(err) = quickwit_client.delete_indexes().await {
             return Err(quickwit_operation_error(err));
         }
@@ -118,6 +119,7 @@ impl QuickwitClient {
         // Check data directory exists - if not, create it
         let root_data_dir: &Path = Path::new(indexer_quickwit_config.data_directory.as_str());
         if !root_data_dir.exists() {
+            debug!("Creating Quickwit data directory: {:?}", root_data_dir);
             if let Err(err) = fs::create_dir_all(root_data_dir) {
                 return Err(QuickwitClientError::QuickwitOperationError(format!(
                     "Failed to create data directory: {:?}",
@@ -145,7 +147,6 @@ impl QuickwitClient {
     /// Delete existing indexes if recreate_indexes is true
     pub async fn delete_indexes(&self) -> Result<(), Box<dyn Error>> {
         if self.recreate_indexes {
-            info!("WARNING: recreate_indexes is true, deleting existing indexes...");
             for table_name in self.table_map.keys() {
                 let index_id = self.get_index_id(table_name);
                 let url = format!("{}/api/v1/indexes/{}", self.api_endpoint, index_id);
@@ -153,13 +154,13 @@ impl QuickwitClient {
                 match self.http_client.delete(&url).send().await {
                     Ok(response) => {
                         if response.status().is_success() || response.status() == 404 {
-                            info!("Deleted index: {}", index_id);
+                            debug!("Deleted index: {}", index_id);
                         } else {
-                            info!("Failed to delete index {}: {}", index_id, response.status());
+                            warn!("Failed to delete index {}: {}", index_id, response.status());
                         }
                     }
                     Err(e) => {
-                        info!("Error deleting index {}: {:?}", index_id, e);
+                        warn!("Error deleting index {}: {:?}", index_id, e);
                     }
                 }
             }
@@ -182,10 +183,10 @@ impl QuickwitClient {
                 .await?;
 
             if response.status().is_success() {
-                info!("Created index: {}", index_id);
+                debug!("Created index: {}", index_id);
             } else if response.status() == 400 {
                 // Index might already exist
-                info!("Index {} may already exist", index_id);
+                debug!("Index {} may already exist", index_id);
             } else {
                 let error_text = response.text().await?;
                 return Err(format!("Failed to create index {}: {}", index_id, error_text).into());
@@ -271,25 +272,25 @@ impl QuickwitClient {
         match self.csv_to_documents(csv_writer.path(), column_map) {
             Ok(documents) => {
                 if documents.is_empty() {
-                    info!("No documents to ingest for {}", table_name);
+                    trace!("No documents to ingest for {}", table_name);
                     return;
                 }
 
                 // Ingest documents in batches
                 for chunk in documents.chunks(self.batch_size) {
                     if let Err(e) = self.ingest_documents_native(&index_id, chunk).await {
-                        info!("Failed to ingest batch for {}: {:?}", table_name, e);
+                        error!("Failed to ingest batch for {}: {:?}", table_name, e);
                     }
                 }
 
-                info!(
+                debug!(
                     "Successfully ingested {} documents to {}",
                     documents.len(),
                     index_id
                 );
             }
             Err(e) => {
-                info!("Failed to convert CSV to documents: {:?}", e);
+                error!("Failed to convert CSV to documents: {:?}", e);
             }
         }
     }
@@ -394,7 +395,7 @@ impl QuickwitClient {
         }
 
         let elapsed = start.elapsed();
-        info!("    Ingested {} docs in {:?}", documents.len(), elapsed);
+        trace!("Ingested {} docs in {:?}", documents.len(), elapsed);
 
         Ok(())
     }
@@ -486,7 +487,7 @@ impl QuickwitClient {
 #[async_trait]
 impl DatasourceWritable for QuickwitClient {
     async fn write_data(&self, table_name: &str, csv_writer: &CsvWriter) {
-        info!("  writing / sync to quickwit index: {:?}", table_name);
+        debug!("Writing data to quickwit index: {}", table_name);
         self.write_csv_to_quickwit(table_name, csv_writer).await;
     }
 

@@ -5,7 +5,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
-use tracing::warn;
+use tracing::{debug, info, warn};
 
 /// Factory trait for creating datasource instances
 #[async_trait]
@@ -39,6 +39,7 @@ impl DatasourceRegistry {
 
     /// Register a datasource factory
     pub fn register(&mut self, factory: Box<dyn DatasourceFactory>) {
+        debug!("Registering datasource factory: {}", factory.name());
         self.factories.insert(factory.name().to_string(), factory);
     }
 
@@ -48,15 +49,25 @@ impl DatasourceRegistry {
         config: &IndexerConfig,
     ) -> Result<Vec<Box<dyn DatasourceWritable>>, IndexerError> {
         let mut writers = Vec::new();
+        debug!(
+            "Creating datasources from {} registered factories",
+            self.factories.len()
+        );
 
         for factory in self.factories.values() {
             if factory.can_handle(config) {
+                info!("Initializing {} datasource", factory.name());
                 match factory.create(config, &config.event_mappings).await {
-                    Ok(writer) => writers.push(writer),
+                    Ok(writer) => {
+                        debug!("{} datasource initialized successfully", factory.name());
+                        writers.push(writer);
+                    }
                     Err(e) => {
                         warn!("Failed to initialize {} datasource: {}", factory.name(), e);
                     }
                 }
+            } else {
+                debug!("{} datasource not configured, skipping", factory.name());
             }
         }
 
@@ -66,6 +77,7 @@ impl DatasourceRegistry {
             ));
         }
 
+        info!("Initialized {} datasource(s)", writers.len());
         Ok(writers)
     }
 }
@@ -147,6 +159,7 @@ pub fn create_default_registry() -> DatasourceRegistry {
 pub async fn init_datasource_writers(
     config: &IndexerConfig,
 ) -> Result<Vec<Box<dyn DatasourceWritable>>, IndexerError> {
+    debug!("Initializing datasource writers");
     let registry = create_default_registry();
     registry.create_datasources(config).await
 }

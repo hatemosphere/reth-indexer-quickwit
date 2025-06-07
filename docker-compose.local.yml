@@ -55,6 +55,7 @@ services:
       - "7281:7281"  # gRPC API
     environment:
       - RUST_LOG=info
+      - QW_ENABLE_OTLP_ENDPOINT=false
     volumes:
       - ./data/quickwit:/quickwit/qwdata
     command: ["run"]

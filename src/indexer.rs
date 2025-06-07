@@ -11,7 +11,7 @@ use reth_primitives_traits::{SignedTransaction, SignerRecoverable};
 use reth_provider::{
     BlockBodyIndicesProvider, BlockNumReader, HeaderProvider, ReceiptProvider, TransactionsProvider,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace, warn};
 // use uuid::Uuid; // Removed - using uuid directly
 
 use crate::{
@@ -147,16 +147,16 @@ async fn sync_state_to_db(
     db_writers: &Vec<Box<dyn DatasourceWritable>>,
 ) {
     let record_count = csv_writer.get_total_records();
-    info!(
-        "Executing sync_state_to_db for table: {:?} with {} records",
-        name, record_count
+    debug!(
+        "Syncing {} records from CSV to database for table: {}",
+        record_count, name
     );
 
     // Ensure all data is flushed before syncing
     csv_writer.flush();
 
-    // info!("Executing datasource insertion / sync...");
     for datasource in db_writers {
+        trace!("Writing data to datasource for table: {}", name);
         datasource.write_data(name.as_str(), csv_writer).await;
     }
 
@@ -182,19 +182,19 @@ async fn sync_all_states_to_db(
     csv_writers: &mut [CsvWriter],
     db_writers: &Vec<Box<dyn DatasourceWritable>>,
 ) {
-    info!("Syncing all remaining CSV data to database...");
+    debug!("Syncing all remaining CSV data to database...");
     for mapping in &indexer_config.event_mappings {
         for abi_item in &mapping.decode_abi_items {
             if let Some(csv_writer) = csv_writers.iter_mut().find(|w| w.name == abi_item.name) {
                 let record_count = csv_writer.get_total_records();
                 if record_count > 0 {
-                    info!(
-                        "  Syncing {} with {} total records",
+                    debug!(
+                        "Syncing {} with {} total records",
                         abi_item.name, record_count
                     );
                     sync_state_to_db(abi_item.name.to_lowercase(), csv_writer, db_writers).await;
                 } else {
-                    info!("  Skipping {} (no records)", abi_item.name);
+                    trace!("Skipping {} (no records)", abi_item.name);
                 }
             }
         }
@@ -292,6 +292,9 @@ pub async fn sync(indexer_config: &IndexerConfig) {
     );
 
     let start = Instant::now();
+    let mut last_progress_report = Instant::now();
+    let progress_interval = Duration::from_secs(30); // Report progress every 30 seconds
+    let initial_block = block_number;
 
     // Process blocks from fromBlock to toBlock
     while block_number <= to_block {
@@ -300,7 +303,7 @@ pub async fn sync(indexer_config: &IndexerConfig) {
         match header_result {
             Err(e) => {
                 // Database errors can occur during heavy syncing
-                info!("Error reading header for block {}: {:?}", block_number, e);
+                warn!("Error reading header for block {}: {:?}", block_number, e);
 
                 // If we get a database error, we might need a new provider
                 // Try to create a new provider to see fresh data
@@ -314,7 +317,7 @@ pub async fn sync(indexer_config: &IndexerConfig) {
             Ok(header_opt) => match header_opt {
                 None => {
                     // Block doesn't exist yet, we've reached the end
-                    info!("Block {} not found, reached end of chain", block_number);
+                    info!("Reached end of chain at block {}", block_number);
                     break;
                 }
                 Some(header_tx_info) => {
@@ -322,7 +325,7 @@ pub async fn sync(indexer_config: &IndexerConfig) {
 
                     // Debug: Print bloom filter status
                     if !header_tx_info.logs_bloom.is_zero() {
-                        info!("  Block {} has non-zero bloom filter", block_number);
+                        trace!("Block {} has non-zero bloom filter", block_number);
                     }
 
                     for mapping in &indexer_config.event_mappings {
@@ -345,7 +348,7 @@ pub async fn sync(indexer_config: &IndexerConfig) {
                             let topic = abi_item_to_topic_id(item);
                             let in_bloom = topic_in_bloom(topic, rpc_bloom);
                             if !header_tx_info.logs_bloom.is_zero() {
-                                info!("    Checking topic {} in bloom: {}", topic, in_bloom);
+                                trace!("Checking topic {} in bloom: {}", topic, in_bloom);
                             }
                             in_bloom
                         });
@@ -354,7 +357,7 @@ pub async fn sync(indexer_config: &IndexerConfig) {
                             continue;
                         }
 
-                        info!("  Processing block {} for mapping", block_number);
+                        debug!("Processing block {} for mapping", block_number);
                         process_block(
                             &provider,
                             &mut csv_writers,
@@ -368,6 +371,28 @@ pub async fn sync(indexer_config: &IndexerConfig) {
                         .await;
                     }
 
+                    // Periodic progress reporting
+                    if last_progress_report.elapsed() >= progress_interval {
+                        let blocks_processed = block_number - initial_block;
+                        let elapsed = start.elapsed();
+                        let blocks_per_second = blocks_processed as f64 / elapsed.as_secs_f64();
+                        let remaining_blocks = to_block - block_number;
+                        let eta_seconds = remaining_blocks as f64 / blocks_per_second;
+
+                        info!(
+                            "Progress: block {} / {} ({:.1}%), {:.2} blocks/sec, ETA: {:.0}s",
+                            block_number,
+                            to_block,
+                            (block_number - initial_block) as f64
+                                / (to_block - initial_block + 1) as f64
+                                * 100.0,
+                            blocks_per_second,
+                            eta_seconds
+                        );
+
+                        last_progress_report = Instant::now();
+                    }
+
                     block_number += 1;
                 }
             },
@@ -377,10 +402,14 @@ pub async fn sync(indexer_config: &IndexerConfig) {
     // Sync any remaining data in CSV buffers
     sync_all_states_to_db(indexer_config, false, &mut csv_writers, &db_writers).await;
 
-    info!("Indexer sync is now complete");
-
     let duration = start.elapsed();
-    info!("Elapsed time: {:.2?}", duration);
+    let blocks_processed = to_block - indexer_config.from_block + 1;
+    let blocks_per_second = blocks_processed as f64 / duration.as_secs_f64();
+
+    info!(
+        "Indexer sync complete: {} blocks in {:.2?} ({:.2} blocks/sec)",
+        blocks_processed, duration, blocks_per_second
+    );
 }
 
 /// Processes a block by iterating over its transactions, filtering them based on contract addresses,
@@ -432,9 +461,10 @@ async fn process_block<P>(
     };
     if let Some(block_body_indices) = block_body_indices {
         if block_body_indices.tx_count > 0 {
-            info!(
-                "  Block {} has {} transactions",
-                block_number, block_body_indices.tx_count
+            trace!(
+                "Block {} has {} transactions",
+                block_number,
+                block_body_indices.tx_count
             );
         }
         let mut tx_index = 0u64;
@@ -524,10 +554,7 @@ async fn process_block<P>(
                             tx_index += 1;
                         }
                         Err(e) => {
-                            info!(
-                                "    Warning: Failed to get receipt for tx {}: {:?}",
-                                tx_id, e
-                            );
+                            warn!("Failed to get receipt for tx {}: {:?}", tx_id, e);
                             tx_index += 1;
                         }
                     }
@@ -537,7 +564,7 @@ async fn process_block<P>(
                     tx_index += 1;
                 }
                 Err(e) => {
-                    info!("    Warning: Failed to get transaction {}: {:?}", tx_id, e);
+                    warn!("Failed to get transaction {}: {:?}", tx_id, e);
                     tx_index += 1;
                 }
             }
@@ -590,15 +617,11 @@ async fn process_transaction<T>(
         }
 
         if let Some(csv_writer) = csv_writers.iter_mut().find(|w| w.name == abi_item.name) {
-            info!(
-                "    Processing {} logs for event {}",
-                logs.len(),
-                abi_item.name
-            );
+            trace!("Processing {} logs for event {}", logs.len(), abi_item.name);
             let decoded_logs = decode_logs(topic_id, logs, abi_item);
             if !decoded_logs.is_empty() {
-                info!(
-                    "    Found {} decoded logs for {}",
+                debug!(
+                    "Found {} decoded logs for {}",
                     decoded_logs.len(),
                     abi_item.name
                 );
@@ -613,7 +636,7 @@ async fn process_transaction<T>(
 
                 // Check if we should sync based on record count
                 if csv_writer.should_sync() {
-                    info!(
+                    debug!(
                         "CSV sync threshold reached for {} (records: {})",
                         abi_item.name,
                         csv_writer.get_total_records()
@@ -621,13 +644,14 @@ async fn process_transaction<T>(
                     sync_state_to_db(abi_item.name.to_lowercase(), csv_writer, db_writers).await;
                 }
             } else {
-                info!(
-                    "    No decoded logs for {} (topic: {:?})",
-                    abi_item.name, topic_id
+                trace!(
+                    "No decoded logs for {} (topic: {:?})",
+                    abi_item.name,
+                    topic_id
                 );
             }
         } else {
-            info!("    No CSV writer found for event {}", abi_item.name);
+            warn!("No CSV writer found for event {}", abi_item.name);
         }
     }
 }

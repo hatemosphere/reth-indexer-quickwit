@@ -4,7 +4,7 @@ use axum::{extract::State, http::StatusCode, response::Json, routing::post, Rout
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{str::FromStr, sync::Arc};
-use tracing::info;
+use tracing::{debug, error, info, trace};
 
 use crate::quickwit::{QuickwitClient, QuickwitSearchRequest};
 
@@ -113,6 +113,7 @@ async fn handle_get_logs(
         };
 
     // Build Quickwit query
+    trace!("Building Quickwit query for filter: {:?}", filter);
     let query_json = build_quickwit_query(&filter);
 
     // Create search request
@@ -122,16 +123,25 @@ async fn handle_get_logs(
         end_timestamp: query_json["end_timestamp"].as_i64().unwrap_or(i64::MAX),
         max_hits: query_json["max_hits"].as_u64().unwrap_or(1000) as usize,
     };
+    debug!(
+        "Search request: query={}, max_hits={}",
+        search_request.query, search_request.max_hits
+    );
 
     // Search across all event types
+    debug!("Searching logs in Quickwit");
     let search_result = match state.quickwit_client.search_all_logs(search_request).await {
-        Ok(result) => result,
+        Ok(result) => {
+            debug!("Found {} logs", result.num_hits);
+            result
+        }
         Err(e) => {
+            error!("Quickwit search failed: {}", e);
             return Ok(Json(JsonRpcResponse::error(
                 request.id,
                 -32603,
                 format!("Internal error: {}", e),
-            )))
+            )));
         }
     };
 
@@ -140,9 +150,12 @@ async fn handle_get_logs(
     for hit in search_result.hits {
         if let Some(log) = quickwit_hit_to_rpc_log(hit) {
             logs.push(log);
+        } else {
+            trace!("Failed to convert Quickwit hit to RPC log");
         }
     }
 
+    trace!("Returning {} logs for eth_getLogs", logs.len());
     Ok(Json(JsonRpcResponse::success(request.id, json!(logs))))
 }
 
@@ -263,8 +276,11 @@ async fn handle_get_block_by_number(
     };
 
     if logs.is_empty() {
+        debug!("No logs found for block {}", block_number);
         return Ok(Json(JsonRpcResponse::success(request.id, json!(null))));
     }
+
+    debug!("Found {} logs for block {}", logs.len(), block_number);
 
     // Extract block info from first log
     let first_log = &logs[0];
@@ -326,6 +342,8 @@ async fn handle_get_transaction_receipt(
     state: RpcState,
     request: JsonRpcRequest,
 ) -> Result<Json<JsonRpcResponse>, StatusCode> {
+    debug!("Handling eth_getTransactionReceipt");
+
     // Parse params: [transactionHash]
     let params_array = request
         .params

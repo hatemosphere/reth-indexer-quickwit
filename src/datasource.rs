@@ -6,7 +6,7 @@ use indexmap::IndexMap;
 use phf::phf_ordered_map;
 use polars::prelude::*;
 use std::{any::Any, collections::HashMap, fs::File};
-use tracing::warn;
+use tracing::{debug, trace, warn};
 
 ///  Common trait for writeable datasources
 ///  This interface will be implemented by each writer to allow for
@@ -66,6 +66,11 @@ pub fn load_table_configs(
     //  Ordered by common columns, then by configured mapped
     let mut all_tables: HashMap<String, IndexMap<String, String>> = HashMap::new();
 
+    debug!(
+        "Loading table configurations for {} event mappings",
+        indexer_event_mappings.len()
+    );
+
     for mapping in indexer_event_mappings {
         for abi_item in mapping.decode_abi_items.iter() {
             let table_name = abi_item.name.to_lowercase();
@@ -90,10 +95,16 @@ pub fn load_table_configs(
                 .chain(column_type_map)
                 .collect();
 
+            trace!(
+                "Configured table {} with {} columns",
+                table_name,
+                merged_column_types.len()
+            );
             all_tables.insert(table_name, merged_column_types);
         }
     }
 
+    debug!("Loaded {} table configurations", all_tables.len());
     all_tables
 }
 
@@ -132,6 +143,7 @@ pub fn read_csv_to_polars(
     path: &str,
     column_map: &IndexMap<String, String>,
 ) -> Result<DataFrame, IndexerError> {
+    trace!("Reading CSV file: {}", path);
     //  Get list of columns in order, from csv file
     let file = File::open(path)
         .map_err(|e| IndexerError::File(format!("Failed to open CSV file {}: {}", path, e)))?;
@@ -163,5 +175,10 @@ pub fn read_csv_to_polars(
         .finish()
         .map_err(|e| IndexerError::Csv(format!("Failed to read CSV: {}", e)))?;
 
+    trace!(
+        "Successfully read CSV with {} rows, {} columns",
+        df.height(),
+        df.width()
+    );
     Ok(df)
 }
